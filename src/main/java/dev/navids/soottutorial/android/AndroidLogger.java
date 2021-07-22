@@ -12,7 +12,7 @@ import java.util.Map;
 public class AndroidLogger {
 
     private final static String USER_HOME = System.getProperty("user.home");
-    private static String androidJar = USER_HOME + "/Library/Android/sdk/platforms";
+    private static String androidJar = USER_HOME + "/Documents/android/platforms";
     static String androidDemoPath = System.getProperty("user.dir") + File.separator + "demo" + File.separator + "Android";
     static String apkPath = androidDemoPath + File.separator + "/calc.apk";
     static String outputPath = androidDemoPath + File.separator + "/Instrumented";

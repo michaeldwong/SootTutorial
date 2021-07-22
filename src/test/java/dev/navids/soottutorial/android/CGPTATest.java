@@ -23,7 +23,7 @@ public class CGPTATest {
     private String apkPath = System.getProperty("user.dir") + File.separator + "demo" + File.separator + "Android" + File.separator + "/st_demo.apk";
     private String androidJar = System.getenv().containsKey("ANDROID_HOME")
                                     ? System.getenv("ANDROID_HOME")+ File.separator+"platforms"
-                                    : System.getProperty("user.home") + "/Library/Android/sdk/platforms";
+                                    : System.getProperty("user.home") + "/Documents/android/platforms";
 
     @Test
     public void testConfig(){
