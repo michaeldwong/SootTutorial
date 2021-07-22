@@ -7,3 +7,7 @@ build
 #Ignore Intellij configurations
 .idea
 *.class
+
+*.swp
+log.txt
+
