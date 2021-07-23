@@ -20,7 +20,6 @@ public class AndroidLogger {
     static String apkPath = androidDemoPath + File.separator + "/calc.apk";
     static String outputPath = androidDemoPath + File.separator + "/Instrumented";
 
-
     public static void main(String[] args){
         if(System.getenv().containsKey("ANDROID_HOME"))
             androidJar = System.getenv("ANDROID_HOME")+ File.separator+"platforms";
@@ -30,8 +29,10 @@ public class AndroidLogger {
             Arrays.asList(files).forEach(File::delete);
         }
         // Initialize Soot
-        ReentrantLock lock = new ReentrantLock();
         InstrumentUtil.setupSoot(androidJar, apkPath, outputPath);
+        // Find the package name of the APK
+        String packageName = AndroidUtil.getPackageName(apkPath);
+        SootClass counterClass = createCounterClass(packageName);
         PackManager.v().getPack("jtp").add(new Transform("jtp.test", new BodyTransformer() {
             @Override
             protected void internalTransform(Body b, String phaseName, Map<String, String> options) {
@@ -39,33 +40,7 @@ public class AndroidLogger {
                 if(AndroidUtil.isAndroidMethod(b.getMethod()))
                     return;
                 JimpleBody body = (JimpleBody) b;
-                UnitPatchingChain units = b.getUnits();
-                Iterator<Unit> it = units.iterator();
-                lock.lock();
-                while (it.hasNext()) {
-                    Unit unit = it.next();
-                    if (unit instanceof JAssignStmt) {
-
-                        System.out.println("\tUNIT: " + unit.toString());
-                        System.out.println("\tSoot type: " + unit.getClass().getName());
-                        Value lhs = ((JAssignStmt)unit).getLeftOp();
-                        Value rhs = ((JAssignStmt)unit).getRightOp();
-                        if (lhs instanceof JInstanceFieldRef) {
-                            // TODO: Record write
-                        }
-                        if (rhs insanceof JInstanceFieldRef) {
-                            // TODO: Record read
-                        }
-                        System.out.println("LHS " + lhs.toString() + " (type: " + lhs.getType().toString() + ") , ");
-                        System.out.println("Soot type: "+ lhs.getClass().getName());
-                        System.out.println("RHS " + rhs.toString() + " (type: " + rhs.getType().toString() + ") , ");
-                        System.out.println("Soot type: "+ rhs.getClass().getName());
-                        System.out.println("\n------------------\n");
-                    }
-
-                }
-
-                lock.unlock();
+                instrumentBody(body);
             }
         }));
         // Add a transformation pack in order to add the statement "System.out.println(<content>) at the beginning of each Application method
@@ -113,6 +88,39 @@ public class AndroidLogger {
         counterClass.setApplicationClass();
         return counterClass;
     }
+
+    static String findClassName(JInstanceFieldRef fieldRef) {
+        return fieldRef.getField()
+                       .getDeclaringClass()
+                       .getName();
+    }
+
+    static void instrumentBody(JimpleBody body) {
+        ReentrantLock lock = new ReentrantLock();
+        UnitPatchingChain units = body.getUnits();
+        Iterator<Unit> it = units.iterator();
+        lock.lock();
+        while (it.hasNext()) {
+            Unit unit = it.next();
+            if (unit instanceof JAssignStmt) {
+                System.out.println("\tUNIT: " + unit.toString());
+                System.out.println("\tSoot type: " + unit.getClass().getName());
+                Value lhs = ((JAssignStmt)unit).getLeftOp();
+                Value rhs = ((JAssignStmt)unit).getRightOp();
+                if (lhs instanceof JInstanceFieldRef) {
+                    String className = findClassName((JInstanceFieldRef)lhs);
+                    System.out.println(className);
+                }
+                if (rhs instanceof JInstanceFieldRef) {
+                    String className = findClassName((JInstanceFieldRef)rhs);
+                    System.out.println(className);
+                }
+                System.out.println("\n------------------\n");
+            }
+        }
+        lock.unlock();
+
+    }
     // Create new counter for every new object type encountered
     static SootField addCounter(SootClass counterClass, String typeName) {
         SootField counterField = new SootField(typeName + "counter", 
@@ -120,6 +128,7 @@ public class AndroidLogger {
         counterClass.addField(counterField);
         return counterField;
     }
+
     static SootMethod createMethod(SootClass counterClass, String typeName, SootField counterField) {
         SootMethod incMethod = new SootMethod("increment" + typeName,
             Arrays.asList(new Type[]{}),
