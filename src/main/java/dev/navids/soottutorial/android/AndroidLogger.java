@@ -10,15 +10,21 @@ import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.HashSet;
 
 import java.util.concurrent.locks.*;
+
 public class AndroidLogger {
 
     private final static String USER_HOME = System.getProperty("user.home");
     private static String androidJar = USER_HOME + "/Documents/android/platforms";
+    private static HashSet<String> typesGenerated = new HashSet<String>();
+    private static HashSet<String> generatedFunctionNames = new HashSet<String>();
     static String androidDemoPath = System.getProperty("user.dir") + File.separator + "demo" + File.separator + "Android";
     static String apkPath = androidDemoPath + File.separator + "/calc.apk";
     static String outputPath = androidDemoPath + File.separator + "/Instrumented";
+
+    static ReentrantLock lock = new ReentrantLock();
 
     public static void main(String[] args){
         if(System.getenv().containsKey("ANDROID_HOME"))
@@ -39,8 +45,10 @@ public class AndroidLogger {
                 // First we filter out Android framework methods
                 if(AndroidUtil.isAndroidMethod(b.getMethod()))
                     return;
+                lock.lock();
                 JimpleBody body = (JimpleBody) b;
-                instrumentBody(body);
+                instrumentBody(body, counterClass);
+                lock.unlock();
             }
         }));
         // Add a transformation pack in order to add the statement "System.out.println(<content>) at the beginning of each Application method
@@ -48,8 +56,9 @@ public class AndroidLogger {
             @Override
             protected void internalTransform(Body b, String phaseName, Map<String, String> options) {
                 // First we filter out Android framework methods
-                if(AndroidUtil.isAndroidMethod(b.getMethod()))
+                if(AndroidUtil.isAndroidMethod(b.getMethod()) || generatedFunctionNames.contains(b.getMethod().getName())) {
                     return;
+                }
                 JimpleBody body = (JimpleBody) b;
                 UnitPatchingChain units = b.getUnits();
                 List<Unit> generatedUnits = new ArrayList<>();
@@ -75,8 +84,22 @@ public class AndroidLogger {
                 b.validate();
             }
         }));
+        // PRINT STAGE
+        PackManager.v().getPack("jtp").add(new Transform("jtp.print", new BodyTransformer() {
+            @Override
+            protected void internalTransform(Body b, String phaseName, Map<String, String> options) {
+                // First we filter out Android framework methods
+                if(AndroidUtil.isAndroidMethod(b.getMethod()))
+                    return;
+                lock.lock();
+                JimpleBody body = (JimpleBody) b;
+                System.out.println(body.toString());
+                lock.unlock();
+            }
+        }));
         // Run Soot packs (note that our transformer pack is added to the phase "jtp")
         PackManager.v().runPacks();
+
         // Write the result of packs in outputPath
         PackManager.v().writeOutput();
     }
@@ -95,44 +118,57 @@ public class AndroidLogger {
                        .getName();
     }
 
-    static void instrumentBody(JimpleBody body) {
-        ReentrantLock lock = new ReentrantLock();
+    static void instrumentBody(JimpleBody body, SootClass counterClass) {
         UnitPatchingChain units = body.getUnits();
         Iterator<Unit> it = units.iterator();
-        lock.lock();
         while (it.hasNext()) {
             Unit unit = it.next();
             if (unit instanceof JAssignStmt) {
-                System.out.println("\tUNIT: " + unit.toString());
-                System.out.println("\tSoot type: " + unit.getClass().getName());
                 Value lhs = ((JAssignStmt)unit).getLeftOp();
                 Value rhs = ((JAssignStmt)unit).getRightOp();
                 if (lhs instanceof JInstanceFieldRef) {
-                    String className = findClassName((JInstanceFieldRef)lhs);
-                    System.out.println(className);
+                    String fullClassName = findClassName((JInstanceFieldRef)lhs);
+                    if (!typesGenerated.contains(fullClassName)) {
+                        generateCounterCode(fullClassName, counterClass);
+                        typesGenerated.add(fullClassName);
+                    }
                 }
                 if (rhs instanceof JInstanceFieldRef) {
-                    String className = findClassName((JInstanceFieldRef)rhs);
-                    System.out.println(className);
+                    String fullClassName = findClassName((JInstanceFieldRef)rhs);
+                    if (!typesGenerated.contains(fullClassName)) {
+                        generateCounterCode(fullClassName, counterClass);
+                        typesGenerated.add(fullClassName);
+                    }
                 }
-                System.out.println("\n------------------\n");
             }
         }
-        lock.unlock();
-
     }
+    static void generateCounterCode(String fullClassName, SootClass counterClass) {
+        String [] strArray = fullClassName.split("\\.");
+        String typeName = strArray[strArray.length - 1];
+        String joinedName = String.join("", strArray);
+        SootField readCounter = addCounter(joinedName + "Read", counterClass);
+        SootField writeCounter = addCounter(joinedName + "Write", counterClass);
+        SootMethod readIncMethod = createMethod(counterClass,  
+            joinedName + "Read", fullClassName + " read", readCounter);
+        SootMethod writeIncMethod = createMethod(counterClass, 
+            joinedName + "Write", fullClassName + " write", writeCounter);
+    }
+
     // Create new counter for every new object type encountered
-    static SootField addCounter(SootClass counterClass, String typeName) {
-        SootField counterField = new SootField(typeName + "counter", 
+    static SootField addCounter(String name, SootClass counterClass) {
+        SootField counterField = new SootField(name + "Counter", 
             IntType.v(), Modifier.PUBLIC | Modifier.STATIC);
         counterClass.addField(counterField);
         return counterField;
     }
 
-    static SootMethod createMethod(SootClass counterClass, String typeName, SootField counterField) {
-        SootMethod incMethod = new SootMethod("increment" + typeName,
+    static SootMethod createMethod(SootClass counterClass, String name, String nameForLog, SootField counterField) {
+        String methodName = "increment" + name;
+        SootMethod incMethod = new SootMethod(methodName,
             Arrays.asList(new Type[]{}),
             VoidType.v(), Modifier.PUBLIC | Modifier.STATIC);
+        generatedFunctionNames.add(methodName);
         counterClass.addMethod(incMethod);
         JimpleBody body = Jimple.v().newBody(incMethod);
         UnitPatchingChain units = body.getUnits();
@@ -142,7 +178,7 @@ public class AndroidLogger {
         units.add(Jimple.v().newAssignStmt(counterLocal, 
                 Jimple.v().newAddExpr(counterLocal, IntConstant.v(1))));
         units.add(Jimple.v().newAssignStmt(Jimple.v().newStaticFieldRef(counterField.makeRef()), counterLocal));
-        units.addAll(InstrumentUtil.generateLogStmts(body, typeName + " counter = ", counterLocal));
+        units.addAll(InstrumentUtil.generateLogStmts(body, nameForLog + " counter = ", counterLocal));
         Unit returnUnit = Jimple.v().newReturnVoidStmt();
         units.add(returnUnit);
         body.validate();

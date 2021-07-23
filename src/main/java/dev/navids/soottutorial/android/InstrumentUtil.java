@@ -14,7 +14,7 @@ import java.util.Collections;
 import java.util.List;
 
 public class InstrumentUtil {
-    public static final String TAG = "<SOOT_TUTORIAL>";
+    public static final String TAG = "<SOOT_PROFILING>";
 
     public static void setupSoot(String androidJar, String apkPath, String outputPath) {
         G.reset();
