@@ -2,6 +2,7 @@ package dev.navids.soottutorial.android;
 
 import soot.*;
 import soot.jimple.*;
+import soot.jimple.internal.*;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -41,31 +42,29 @@ public class AndroidLogger {
                 UnitPatchingChain units = b.getUnits();
                 Iterator<Unit> it = units.iterator();
                 lock.lock();
-                System.out.println("\nMethod : " + b.getMethod().getSignature());
-                System.out.println("Class : " + b.getMethod().getDeclaringClass().getName());
-//                System.out.println(b.toString());
-
                 while (it.hasNext()) {
                     Unit unit = it.next();
-                    System.out.println("\tUNIT: " + unit.toString());
+                    if (unit instanceof JAssignStmt) {
 
-                    List<ValueBox> defBoxes = unit.getDefBoxes();
-                    List<ValueBox> useBoxes = unit.getUseBoxes();
-                    if (defBoxes.size() > 0) {
-                        System.out.print("\n\tdefBoxes: ");
-                        for (ValueBox v : defBoxes) {
-                            System.out.print(v.toString() + " (type: " + v.getValue().getType().toString() + ") , ");
+                        System.out.println("\tUNIT: " + unit.toString());
+                        System.out.println("\tSoot type: " + unit.getClass().getName());
+                        Value lhs = ((JAssignStmt)unit).getLeftOp();
+                        Value rhs = ((JAssignStmt)unit).getRightOp();
+                        if (lhs instanceof JInstanceFieldRef) {
+                            // TODO: Record write
                         }
+                        if (rhs insanceof JInstanceFieldRef) {
+                            // TODO: Record read
+                        }
+                        System.out.println("LHS " + lhs.toString() + " (type: " + lhs.getType().toString() + ") , ");
+                        System.out.println("Soot type: "+ lhs.getClass().getName());
+                        System.out.println("RHS " + rhs.toString() + " (type: " + rhs.getType().toString() + ") , ");
+                        System.out.println("Soot type: "+ rhs.getClass().getName());
+                        System.out.println("\n------------------\n");
                     }
 
-                    if (useBoxes.size() > 0) {
-                        System.out.println("\n\tuseBoxes: ");
-                        for (ValueBox v : useBoxes) {
-                            System.out.print(v.toString()  + " (type: " + v.getValue().getType().toString() + ") , ");
-                        }
-                    }
-                    System.out.println("\n------------------\n");
                 }
+
                 lock.unlock();
             }
         }));
@@ -106,6 +105,7 @@ public class AndroidLogger {
         // Write the result of packs in outputPath
         PackManager.v().writeOutput();
     }
+
     static SootClass createCounterClass(String packageName) {
         String signature = packageName + ".StaticCounter";
         SootClass counterClass = new SootClass(signature, Modifier.PUBLIC);
