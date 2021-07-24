@@ -100,7 +100,6 @@ public class AndroidLogger {
     static void instrumentBody(JimpleBody body, SootClass counterClass, 
                     HashMap<String,SootMethod> classToReadMethods, 
                     HashMap<String,SootMethod> classToWriteMethods) {
-        // TODO: Look at reads from other than assignments, e.g., specialinvoke
         UnitPatchingChain units = body.getUnits();
         Iterator<Unit> it = units.iterator();
         ArrayList<InsertionPair<Unit>> insertionPairs = new ArrayList<InsertionPair<Unit>>();
@@ -111,25 +110,18 @@ public class AndroidLogger {
                 Value rhs = ((JAssignStmt)unit).getRightOp();
                 if (lhs instanceof JInstanceFieldRef) {
                     String fullClassName = findClassName((JInstanceFieldRef)lhs);
-                    if (!classToReadMethods.containsKey(fullClassName)) {
-                        SootMethod incReadMethod = generateReadCounter(fullClassName, counterClass);
-                        SootMethod incWriteMethod = generateWriteCounter(fullClassName, counterClass);
-                        classToReadMethods.put(fullClassName, incReadMethod);
-                        classToWriteMethods.put(fullClassName, incWriteMethod);
-                    }
+                    generateMethods(fullClassName, counterClass, classToReadMethods, classToWriteMethods);
+                    SootMethod writeMethod = classToWriteMethods.get(fullClassName);
+                    insertionPairs.add(
+                        generateInsertionPair(fullClassName, classToReadMethods, unit)
+                    );
                 }
                 if (rhs instanceof JInstanceFieldRef) {
                     String fullClassName = findClassName((JInstanceFieldRef)rhs);
-                    if (!classToReadMethods.containsKey(fullClassName)) {
-                        SootMethod incReadMethod = generateReadCounter(fullClassName, counterClass);
-                        SootMethod incWriteMethod = generateWriteCounter(fullClassName, counterClass);
-                        classToReadMethods.put(fullClassName, incReadMethod);
-                        classToWriteMethods.put(fullClassName, incWriteMethod);
-                    }
-                    SootMethod readMethod = classToReadMethods.get(fullClassName);
-                    Unit call = Jimple.v().newInvokeStmt(Jimple.v().newStaticInvokeExpr(readMethod.makeRef()));
-                    InsertionPair<Unit> pair = new InsertionPair<Unit>(call, unit);
-                    insertionPairs.add(pair);
+                    generateMethods(fullClassName, counterClass, classToReadMethods, classToWriteMethods);
+                    insertionPairs.add(
+                        generateInsertionPair(fullClassName, classToReadMethods, unit)
+                    );
                 }
             }
         }
@@ -138,6 +130,24 @@ public class AndroidLogger {
         }
         body.validate();
     }
+
+    static void generateMethods(String fullClassName, SootClass counterClass, 
+                    HashMap<String,SootMethod> classToReadMethods, 
+                    HashMap<String,SootMethod> classToWriteMethods) {
+        if (!classToReadMethods.containsKey(fullClassName)) {
+            SootMethod incReadMethod = generateReadCounter(fullClassName, counterClass);
+            SootMethod incWriteMethod = generateWriteCounter(fullClassName, counterClass);
+            classToReadMethods.put(fullClassName, incReadMethod);
+            classToWriteMethods.put(fullClassName, incWriteMethod);
+        }
+    }
+    static InsertionPair generateInsertionPair(String fullClassName, HashMap<String, SootMethod> classToMethods, Unit unit) {
+        SootMethod method = classToMethods.get(fullClassName);
+        Unit call = Jimple.v().newInvokeStmt(Jimple.v().newStaticInvokeExpr(method.makeRef()));
+        InsertionPair<Unit> pair = new InsertionPair<Unit>(call, unit);
+        return pair;
+    }
+
     static SootMethod generateReadCounter(String fullClassName, SootClass counterClass) {
         String [] strArray = fullClassName.split("\\.");
         String typeName = strArray[strArray.length - 1];
@@ -231,3 +241,4 @@ class InsertionPair<E> {
         this.point = point; 
     }
 }
+
