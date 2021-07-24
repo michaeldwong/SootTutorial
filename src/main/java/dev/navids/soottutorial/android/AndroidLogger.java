@@ -103,6 +103,7 @@ public class AndroidLogger {
         // TODO: Look at reads from other than assignments, e.g., specialinvoke
         UnitPatchingChain units = body.getUnits();
         Iterator<Unit> it = units.iterator();
+        ArrayList<InsertionPair<Unit>> insertionPairs = new ArrayList<InsertionPair<Unit>>();
         while (it.hasNext()) {
             Unit unit = it.next();
             if (unit instanceof JAssignStmt) {
@@ -125,9 +126,17 @@ public class AndroidLogger {
                         classToReadMethods.put(fullClassName, incReadMethod);
                         classToWriteMethods.put(fullClassName, incWriteMethod);
                     }
+                    SootMethod readMethod = classToReadMethods.get(fullClassName);
+                    Unit call = Jimple.v().newInvokeStmt(Jimple.v().newStaticInvokeExpr(readMethod.makeRef()));
+                    InsertionPair<Unit> pair = new InsertionPair<Unit>(call, unit);
+                    insertionPairs.add(pair);
                 }
             }
         }
+        for (InsertionPair<Unit> pair : insertionPairs) {
+            units.insertBefore(pair.toInsert , pair.point);
+        }
+        body.validate();
     }
     static SootMethod generateReadCounter(String fullClassName, SootClass counterClass) {
         String [] strArray = fullClassName.split("\\.");
@@ -212,4 +221,13 @@ public class AndroidLogger {
             b.validate();
         }
     } 
+}
+
+class InsertionPair<E> {
+    protected final E toInsert;
+    protected final E point;
+    public InsertionPair(E toInsert, E point) {
+        this.toInsert = toInsert;
+        this.point = point; 
+    }
 }
