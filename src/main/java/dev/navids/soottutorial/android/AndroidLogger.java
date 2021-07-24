@@ -41,8 +41,7 @@ public class AndroidLogger {
         String packageName = AndroidUtil.getPackageName(apkPath);
         SootClass counterClass = createCounterClass(packageName);
         PackManager.v().getPack("jtp").add(new Transform("jtp.test", new ProfilingCodeInjector(counterClass)));
-        // Add a transformation pack in order to add the statement "System.out.println(<content>) at the beginning of each Application method
-        PackManager.v().getPack("jtp").add(new Transform("jtp.myLogger", new FunctionTracker()));
+        PackManager.v().getPack("jtp").add(new Transform("jtp.myLogger", new FunctionTracker(counterClass)));
         // PRINT STAGE
         PackManager.v().getPack("jtp").add(new Transform("jtp.print", new BodyTransformer() {
             @Override
@@ -111,7 +110,6 @@ public class AndroidLogger {
                 if (lhs instanceof JInstanceFieldRef) {
                     String fullClassName = findClassName((JInstanceFieldRef)lhs);
                     generateMethods(fullClassName, counterClass, classToReadMethods, classToWriteMethods);
-                    SootMethod writeMethod = classToWriteMethods.get(fullClassName);
                     insertionPairs.add(
                         generateInsertionPair(fullClassName, classToReadMethods, unit)
                     );
@@ -126,7 +124,7 @@ public class AndroidLogger {
             }
         }
         for (InsertionPair<Unit> pair : insertionPairs) {
-            units.insertBefore(pair.toInsert , pair.point);
+            units.insertBefore(pair.toInsert, pair.point);
         }
         body.validate();
     }
@@ -141,6 +139,7 @@ public class AndroidLogger {
             classToWriteMethods.put(fullClassName, incWriteMethod);
         }
     }
+
     static InsertionPair generateInsertionPair(String fullClassName, HashMap<String, SootMethod> classToMethods, Unit unit) {
         SootMethod method = classToMethods.get(fullClassName);
         Unit call = Jimple.v().newInvokeStmt(Jimple.v().newStaticInvokeExpr(method.makeRef()));
@@ -166,6 +165,16 @@ public class AndroidLogger {
         SootMethod writeIncMethod = createMethod(counterClass, 
             joinedName + "Write", fullClassName + " write", writeCounter);
         return writeIncMethod;
+    }
+    static SootMethod generateFunctionCounter(String fullFunctionName, SootClass counterClass) {
+        String [] strArray = fullFunctionName.split("\\.");
+        String functionName = strArray[strArray.length - 1];
+        String joinedName = String.join("", strArray);
+        SootField functionCounter = addCounter(joinedName + "Call", counterClass);
+        SootMethod functionIncMethod = createMethod(counterClass, 
+            joinedName + "Call", fullFunctionName + " function call", functionCounter);
+        return functionIncMethod;
+
     }
 
     // Create new counter for every new object type encountered
@@ -198,8 +207,23 @@ public class AndroidLogger {
         incMethod.setActiveBody(body);
         return incMethod;
     }
-  
+
+    static String findFullMethodName(SootMethod method) {
+        String name = method.getName();
+        name = name.replace("<", "");
+        name = name.replace(">", "");
+        return method.getDeclaringClass().getName() + "_" + name;
+    }
+ 
     static class FunctionTracker extends BodyTransformer {
+
+        SootClass counterClass;
+        HashSet<String> counterMethodNames = new HashSet<String>();
+        HashMap<String,SootMethod> functionNamesToMethods = new HashMap<String, SootMethod>();
+        public FunctionTracker(SootClass counterClass) {
+            this.counterClass = counterClass;
+        }
+
         @Override
         protected void internalTransform(Body b, String phaseName, Map<String, String> options) {
             // First we filter out Android framework methods
@@ -208,11 +232,17 @@ public class AndroidLogger {
             }
             JimpleBody body = (JimpleBody) b;
             UnitPatchingChain units = b.getUnits();
-            List<Unit> generatedUnits = new ArrayList<>();
-
+            String fullMethodString = findFullMethodName(b.getMethod());
+            if (this.counterMethodNames.contains(fullMethodString)) {
+                return;
+            }
+            this.counterMethodNames.add(fullMethodString);
+            SootMethod counterMethod = generateFunctionCounter(fullMethodString, this.counterClass);
+ //           List<Unit> generatedUnits = new ArrayList<>();
             // The message that we want to log
-            String content = String.format("%s Beginning of method %s", InstrumentUtil.TAG, body.getMethod().getSignature());
+//            String content = String.format("%s Beginning of method %s", InstrumentUtil.TAG, body.getMethod().getSignature());
             // In order to call "System.out.println" we need to create a local containing "System.out" value
+/*
             Local psLocal = InstrumentUtil.generateNewLocal(body, RefType.v("java.io.PrintStream"));
             // Now we assign "System.out" to psLocal
             SootField sysOutField = Scene.v().getField("<java.lang.System: java.io.PrintStream out>");
@@ -224,9 +254,11 @@ public class AndroidLogger {
             Value printlnParamter = StringConstant.v(content);
             InvokeStmt printlnMethodCallStmt = Jimple.v().newInvokeStmt(Jimple.v().newVirtualInvokeExpr(psLocal, printlnMethod.makeRef(), printlnParamter));
             generatedUnits.add(printlnMethodCallStmt);
+*/
 
+            Unit call = Jimple.v().newInvokeStmt(Jimple.v().newStaticInvokeExpr(counterMethod.makeRef()));
             // Insert the generated statement before the first  non-identity stmt
-            units.insertBefore(generatedUnits, body.getFirstNonIdentityStmt());
+            units.insertBefore(call, body.getFirstNonIdentityStmt());
             // Validate the body to ensure that our code injection does not introduce any problem (at least statically)
             b.validate();
         }
