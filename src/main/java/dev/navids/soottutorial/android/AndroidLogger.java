@@ -238,24 +238,6 @@ public class AndroidLogger {
             }
             this.counterMethodNames.add(fullMethodString);
             SootMethod counterMethod = generateFunctionCounter(fullMethodString, this.counterClass);
- //           List<Unit> generatedUnits = new ArrayList<>();
-            // The message that we want to log
-//            String content = String.format("%s Beginning of method %s", InstrumentUtil.TAG, body.getMethod().getSignature());
-            // In order to call "System.out.println" we need to create a local containing "System.out" value
-/*
-            Local psLocal = InstrumentUtil.generateNewLocal(body, RefType.v("java.io.PrintStream"));
-            // Now we assign "System.out" to psLocal
-            SootField sysOutField = Scene.v().getField("<java.lang.System: java.io.PrintStream out>");
-            AssignStmt sysOutAssignStmt = Jimple.v().newAssignStmt(psLocal, Jimple.v().newStaticFieldRef(sysOutField.makeRef()));
-            generatedUnits.add(sysOutAssignStmt);
-
-            // Create println method call and provide its parameter
-            SootMethod printlnMethod = Scene.v().grabMethod("<java.io.PrintStream: void println(java.lang.String)>");
-            Value printlnParamter = StringConstant.v(content);
-            InvokeStmt printlnMethodCallStmt = Jimple.v().newInvokeStmt(Jimple.v().newVirtualInvokeExpr(psLocal, printlnMethod.makeRef(), printlnParamter));
-            generatedUnits.add(printlnMethodCallStmt);
-*/
-
             Unit call = Jimple.v().newInvokeStmt(Jimple.v().newStaticInvokeExpr(counterMethod.makeRef()));
             // Insert the generated statement before the first  non-identity stmt
             units.insertBefore(call, body.getFirstNonIdentityStmt());
