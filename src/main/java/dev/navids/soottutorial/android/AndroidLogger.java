@@ -117,6 +117,9 @@ public class AndroidLogger {
                type.equals(DOUBLE) || type.equals(FLOAT) ||
                type.equals(BYTE) || type.equals(SHORT);
     }
+
+    // Takes a JimpleBody and iterates through the units, adding new 
+    // counters as needed
     static void instrumentBody(JimpleBody body, SootClass counterClass, 
                     HashMap<String,SootMethod> classToReadMethods, 
                     HashMap<String,SootMethod> classToWriteMethods) {
@@ -129,35 +132,13 @@ public class AndroidLogger {
                 System.out.println(unit.toString());
                 Value lhs = ((JAssignStmt)unit).getLeftOp();
                 Value rhs = ((JAssignStmt)unit).getRightOp();
-//                System.out.println("\tlhs type : " + lhs.getClass().getName());
-//                System.out.println("\trhs type : " + rhs.getClass().getName() );
                 if (lhs instanceof JInstanceFieldRef) {
-                    String fullClassName = findClassName((JInstanceFieldRef)lhs);
-                    generateMethods(fullClassName, counterClass, classToReadMethods, classToWriteMethods);
-                    insertionPairs.add(
-                        generateInsertionPair(fullClassName, classToWriteMethods, unit)
-                    );
-                    String typeName = findTypeName((JInstanceFieldRef)lhs);
-                    if (isPrimitive(typeName)) {
-                        generateMethods(typeName, counterClass, classToReadMethods, classToWriteMethods);
-                        insertionPairs.add(
-                            generateInsertionPair(typeName, classToWriteMethods, unit)
-                        );
-                    }
+                    generateLhsCounters(lhs, unit, counterClass, classToReadMethods, 
+                        classToWriteMethods, insertionPairs);
                 }
                 if (rhs instanceof JInstanceFieldRef) {
-                    String fullClassName = findClassName((JInstanceFieldRef)rhs);
-                    generateMethods(fullClassName, counterClass, classToReadMethods, classToWriteMethods);
-                    insertionPairs.add(
-                        generateInsertionPair(fullClassName, classToReadMethods, unit)
-                    );
-                    String typeName = findTypeName((JInstanceFieldRef)rhs);
-                    if (isPrimitive(typeName)) {
-                        generateMethods(typeName, counterClass, classToReadMethods, classToWriteMethods);
-                        insertionPairs.add(
-                            generateInsertionPair(typeName, classToReadMethods, unit)
-                        );
-                    }
+                    generateRhsCounters(rhs, unit, counterClass, classToReadMethods, 
+                        classToWriteMethods, insertionPairs);
                 }
             }
         }
@@ -167,6 +148,45 @@ public class AndroidLogger {
         body.validate();
     }
 
+    // Generate counter code for the lhs in an assignment statement
+    static void generateLhsCounters(Value lhs, Unit unit, SootClass counterClass, 
+                    HashMap<String,SootMethod> classToReadMethods, 
+                    HashMap<String,SootMethod> classToWriteMethods,
+                    ArrayList<InsertionPair<Unit>> insertionPairs) {
+        String fullClassName = findClassName((JInstanceFieldRef)lhs);
+        generateMethods(fullClassName, counterClass, classToReadMethods, classToWriteMethods);
+        insertionPairs.add(
+            generateInsertionPair(fullClassName, classToWriteMethods, unit)
+        );
+        String typeName = findTypeName((JInstanceFieldRef)lhs);
+        if (isPrimitive(typeName)) {
+            generateMethods(typeName, counterClass, classToReadMethods, classToWriteMethods);
+            insertionPairs.add(
+                generateInsertionPair(typeName, classToWriteMethods, unit)
+            );
+        }
+    }
+
+    // Generate counter code for the rhs in an assignment statement
+    static void generateRhsCounters(Value rhs, Unit unit, SootClass counterClass, 
+                    HashMap<String,SootMethod> classToReadMethods, 
+                    HashMap<String,SootMethod> classToWriteMethods,
+                    ArrayList<InsertionPair<Unit>> insertionPairs) {
+
+        String fullClassName = findClassName((JInstanceFieldRef)rhs);
+        generateMethods(fullClassName, counterClass, classToReadMethods, classToWriteMethods);
+        insertionPairs.add(
+            generateInsertionPair(fullClassName, classToReadMethods, unit)
+        );
+        String typeName = findTypeName((JInstanceFieldRef)rhs);
+        if (isPrimitive(typeName)) {
+            generateMethods(typeName, counterClass, classToReadMethods, classToWriteMethods);
+            insertionPairs.add(
+                generateInsertionPair(typeName, classToReadMethods, unit)
+            );
+        }
+
+    }
     static void generateMethods(String fullClassName, SootClass counterClass, 
                     HashMap<String,SootMethod> classToReadMethods, 
                     HashMap<String,SootMethod> classToWriteMethods) {
@@ -212,7 +232,6 @@ public class AndroidLogger {
         SootMethod functionIncMethod = createMethod(counterClass, 
             joinedName + "Call", fullFunctionName + " function call", functionCounter);
         return functionIncMethod;
-
     }
 
     // Create new counter for every new object type encountered
