@@ -25,6 +25,15 @@ public class AndroidLogger {
     static String apkPath = androidDemoPath + File.separator + "/calc.apk";
     static String outputPath = androidDemoPath + File.separator + "/Instrumented";
 
+    private static String INT = "int";
+    private static String FLOAT = "float";
+    private static String CHAR = "char";
+    private static String LONG = "long";
+    private static String BOOLEAN = "boolean";
+    private static String SHORT = "short";
+    private static String BYTE = "byte";
+    private static String DOUBLE = "double";
+
     static ReentrantLock lock = new ReentrantLock();
 
     public static void main(String[] args){
@@ -96,6 +105,18 @@ public class AndroidLogger {
                        .getName();
     }
 
+    static String findTypeName(JInstanceFieldRef fieldRef) {
+        return fieldRef.getField()
+                       .getType()
+                       .toString();
+    }
+
+    static boolean isPrimitive(String type) {
+        return type.equals(INT) || type.equals(BOOLEAN) ||
+               type.equals(LONG) || type.equals(CHAR) ||
+               type.equals(DOUBLE) || type.equals(FLOAT) ||
+               type.equals(BYTE) || type.equals(SHORT);
+    }
     static void instrumentBody(JimpleBody body, SootClass counterClass, 
                     HashMap<String,SootMethod> classToReadMethods, 
                     HashMap<String,SootMethod> classToWriteMethods) {
@@ -105,14 +126,24 @@ public class AndroidLogger {
         while (it.hasNext()) {
             Unit unit = it.next();
             if (unit instanceof JAssignStmt) {
+                System.out.println(unit.toString());
                 Value lhs = ((JAssignStmt)unit).getLeftOp();
                 Value rhs = ((JAssignStmt)unit).getRightOp();
+//                System.out.println("\tlhs type : " + lhs.getClass().getName());
+//                System.out.println("\trhs type : " + rhs.getClass().getName() );
                 if (lhs instanceof JInstanceFieldRef) {
                     String fullClassName = findClassName((JInstanceFieldRef)lhs);
                     generateMethods(fullClassName, counterClass, classToReadMethods, classToWriteMethods);
                     insertionPairs.add(
-                        generateInsertionPair(fullClassName, classToReadMethods, unit)
+                        generateInsertionPair(fullClassName, classToWriteMethods, unit)
                     );
+                    String typeName = findTypeName((JInstanceFieldRef)lhs);
+                    if (isPrimitive(typeName)) {
+                        generateMethods(typeName, counterClass, classToReadMethods, classToWriteMethods);
+                        insertionPairs.add(
+                            generateInsertionPair(typeName, classToWriteMethods, unit)
+                        );
+                    }
                 }
                 if (rhs instanceof JInstanceFieldRef) {
                     String fullClassName = findClassName((JInstanceFieldRef)rhs);
@@ -120,6 +151,13 @@ public class AndroidLogger {
                     insertionPairs.add(
                         generateInsertionPair(fullClassName, classToReadMethods, unit)
                     );
+                    String typeName = findTypeName((JInstanceFieldRef)rhs);
+                    if (isPrimitive(typeName)) {
+                        generateMethods(typeName, counterClass, classToReadMethods, classToWriteMethods);
+                        insertionPairs.add(
+                            generateInsertionPair(typeName, classToReadMethods, unit)
+                        );
+                    }
                 }
             }
         }
