@@ -128,18 +128,31 @@ public class AndroidLogger {
         ArrayList<InsertionPair<Unit>> insertionPairs = new ArrayList<InsertionPair<Unit>>();
         while (it.hasNext()) {
             Unit unit = it.next();
+//            System.out.println(unit.toString());
             if (unit instanceof JAssignStmt) {
-                System.out.println(unit.toString());
+//                System.out.println(unit.toString());
                 Value lhs = ((JAssignStmt)unit).getLeftOp();
                 Value rhs = ((JAssignStmt)unit).getRightOp();
+//                System.out.println("\tlhs type : " + lhs.getClass().getName());
+//                System.out.println("\trhs type : " + rhs.getClass().getName());
                 if (lhs instanceof JInstanceFieldRef) {
-                    generateLhsCounters(lhs, unit, counterClass, classToReadMethods, 
+                    generateLhsFieldCounters(lhs, unit, counterClass, classToReadMethods, 
                         classToWriteMethods, insertionPairs);
+                }
+                else if (lhs instanceof JArrayRef) {
+                    generateLhsArrayCounters(lhs, unit, counterClass, classToReadMethods, 
+                        classToWriteMethods, insertionPairs);
+
                 }
                 if (rhs instanceof JInstanceFieldRef) {
-                    generateRhsCounters(rhs, unit, counterClass, classToReadMethods, 
+                    generateRhsFieldCounters(rhs, unit, counterClass, classToReadMethods, 
                         classToWriteMethods, insertionPairs);
                 }
+                else if (rhs instanceof JArrayRef) {
+                    generateRhsArrayCounters(rhs, unit, counterClass, classToReadMethods, 
+                        classToWriteMethods, insertionPairs);
+                }
+//                System.out.println("\n--------\n");
             }
         }
         for (InsertionPair<Unit> pair : insertionPairs) {
@@ -148,8 +161,60 @@ public class AndroidLogger {
         body.validate();
     }
 
+    static void generateLhsArrayCounters(Value lhs, Unit unit, SootClass counterClass, 
+                    HashMap<String,SootMethod> classToReadMethods, 
+                    HashMap<String,SootMethod> classToWriteMethods,
+                    ArrayList<InsertionPair<Unit>> insertionPairs) {
+        String fullClassName = ((JArrayRef)lhs)
+                .getBase()
+                .getType()
+                .toString()
+                .replace("[]", "Array");
+        generateMethods(fullClassName, counterClass, classToReadMethods, classToWriteMethods);
+        insertionPairs.add(
+            generateInsertionPair(fullClassName, classToWriteMethods, unit)
+        );
+        String typeName = ((JArrayRef)lhs)
+                .getBase()
+                .getType()
+                .toString()
+                .replace("[]", "");
+        if (isPrimitive(typeName)) {
+            generateMethods(typeName, counterClass, classToReadMethods, classToWriteMethods);
+            insertionPairs.add(
+                generateInsertionPair(typeName, classToWriteMethods, unit)
+            );
+        }
+    }
+
+    static void generateRhsArrayCounters(Value rhs, Unit unit, SootClass counterClass, 
+                    HashMap<String,SootMethod> classToReadMethods, 
+                    HashMap<String,SootMethod> classToWriteMethods,
+                    ArrayList<InsertionPair<Unit>> insertionPairs) {
+        String fullClassName = ((JArrayRef)rhs)
+                .getBase()
+                .getType()
+                .toString()
+                .replace("[]", "Array");
+        generateMethods(fullClassName, counterClass, classToReadMethods, classToWriteMethods);
+        insertionPairs.add(
+            generateInsertionPair(fullClassName, classToReadMethods, unit)
+        );
+        String typeName = ((JArrayRef)rhs)
+                .getBase()
+                .getType()
+                .toString()
+                .replace("[]", "");
+        if (isPrimitive(typeName)) {
+            generateMethods(typeName, counterClass, classToReadMethods, classToWriteMethods);
+            insertionPairs.add(
+                generateInsertionPair(typeName, classToReadMethods, unit)
+            );
+        }
+    }
+
     // Generate counter code for the lhs in an assignment statement
-    static void generateLhsCounters(Value lhs, Unit unit, SootClass counterClass, 
+    static void generateLhsFieldCounters(Value lhs, Unit unit, SootClass counterClass, 
                     HashMap<String,SootMethod> classToReadMethods, 
                     HashMap<String,SootMethod> classToWriteMethods,
                     ArrayList<InsertionPair<Unit>> insertionPairs) {
@@ -168,7 +233,7 @@ public class AndroidLogger {
     }
 
     // Generate counter code for the rhs in an assignment statement
-    static void generateRhsCounters(Value rhs, Unit unit, SootClass counterClass, 
+    static void generateRhsFieldCounters(Value rhs, Unit unit, SootClass counterClass, 
                     HashMap<String,SootMethod> classToReadMethods, 
                     HashMap<String,SootMethod> classToWriteMethods,
                     ArrayList<InsertionPair<Unit>> insertionPairs) {
