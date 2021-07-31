@@ -24,9 +24,9 @@ def write_file(f, names_to_read_count, names_to_write_count, names_to_function_c
 
     for name in names_to_read_count:
         f.write(f'{name} -> {names_to_read_count[name]} reads\n')
-    for name in names_to_read_count:
+    for name in names_to_write_count:
         f.write(f'{name} -> {names_to_read_count[name]} writes\n')
-    for name in names_to_read_count:
+    for name in names_to_function_count:
         f.write(f'{name} -> {names_to_read_count[name]} function calls\n')
     f.write('\n==============\n')
 
