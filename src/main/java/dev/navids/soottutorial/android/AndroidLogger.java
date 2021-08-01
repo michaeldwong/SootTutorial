@@ -85,11 +85,10 @@ public class AndroidLogger {
     static class ObjectProfilingInjector extends BodyTransformer {
 
         SootClass counterClass;
-        HashMap <String, SerialPair> classNamesToSerialPairs;
-
+        HashMap <String, ObjectProfilingData> classNamesToObjectData;
         public ObjectProfilingInjector(SootClass counterClass) {
             this.counterClass = counterClass;
-            this.classNamesToSerialPairs = new HashMap<>();
+            this.classNamesToObjectData = new HashMap<>();
         }
 
         @Override
@@ -111,16 +110,22 @@ public class AndroidLogger {
             }
             SootField staticCounter = null;
             SootField serialField = null;
-            if (this.classNamesToSerialPairs.containsKey(currentClass.getName())) {
-                SerialPair pair = this.classNamesToSerialPairs.get(currentClass.getName());
-                staticCounter = pair.staticCounter;
-                serialField = pair.serialField;
+            SootField readsField = null;
+            SootField writesField = null;
+            if (this.classNamesToObjectData.containsKey(currentClass.getName())) {
+                ObjectProfilingData data = this.classNamesToObjectData.get(currentClass.getName());
+                staticCounter = data.staticCounter;
+                serialField = data.serialField;
+                readsField = data.readsField;
+                writesField = data.writesField;
             }
             else {
                 staticCounter = addStaticCounter(currentClass.getName(), this.counterClass); 
-                serialField = addSerialField(currentClass);
-                this.classNamesToSerialPairs.put(currentClass.getName(), 
-                    new SerialPair(staticCounter, serialField));
+                serialField = addClassField("serial", currentClass);
+                readsField = addClassField("reads", currentClass);
+                writesField = addClassField("writes", currentClass);
+                this.classNamesToObjectData.put(currentClass.getName(), 
+                    new ObjectProfilingData(staticCounter, serialField, readsField, writesField));
             }
             addSerialInitialization((JimpleBody)b, serialField, staticCounter, currentClass);
             lock.unlock();
@@ -160,11 +165,9 @@ public class AndroidLogger {
         units.insertBefore(u3, body.getFirstNonIdentityStmt());
         units.insertBefore(u2, body.getFirstNonIdentityStmt());
         units.insertBefore(u1, body.getFirstNonIdentityStmt());
-
-
         body.validate(); 
-
     }
+
 
     // The following functions are for counting reads/writes at 
     // the level of TYPES
@@ -399,8 +402,8 @@ public class AndroidLogger {
     }
     
     // Field to denote unique id for an object
-    static SootField addSerialField(SootClass currentClass) {
-        SootField serialField = new SootField("serial",
+    static SootField addClassField(String name, SootClass currentClass) {
+        SootField serialField = new SootField(name,
             IntType.v());
         currentClass.addField(serialField);
         return serialField;
@@ -478,11 +481,16 @@ class InsertionPair<E> {
     }
 }
 
-class SerialPair {
+class ObjectProfilingData {
     protected final SootField staticCounter;
     protected final SootField serialField;
-    public SerialPair(SootField staticCounter, SootField serialField) {
+    protected final SootField readsField;
+    protected final SootField writesField;
+
+    public ObjectProfilingData(SootField staticCounter, SootField serialField, SootField readsField, SootField writesField) {
         this.staticCounter = staticCounter;
         this.serialField = serialField; 
+        this.readsField = readsField;
+        this.writesField = writesField;
     }
 }
