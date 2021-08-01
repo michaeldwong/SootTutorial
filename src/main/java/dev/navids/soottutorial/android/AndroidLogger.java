@@ -19,7 +19,7 @@ import java.util.concurrent.locks.*;
 public class AndroidLogger {
 
     private final static String USER_HOME = System.getProperty("user.home");
-    private static String androidJar = USER_HOME + "/Documents/android/platforms";
+    private static String androidJar = "/usr/lib/android-sdk/platforms/";
     private static HashSet<String> generatedFunctionNames = new HashSet<String>();
     static String androidDemoPath = System.getProperty("user.dir") + File.separator + "demo" + File.separator + "Android";
     static String apkPath = androidDemoPath + File.separator + "/calc.apk";
@@ -49,33 +49,113 @@ public class AndroidLogger {
         // Find the package name of the APK
         String packageName = AndroidUtil.getPackageName(apkPath);
         SootClass counterClass = createCounterClass(packageName);
-        PackManager.v().getPack("jtp").add(new Transform("jtp.test", new ProfilingCodeInjector(counterClass)));
-        PackManager.v().getPack("jtp").add(new Transform("jtp.myLogger", new FunctionTracker(counterClass)));
+
+        PackManager.v().getPack("jtp").add(new Transform("jtp.test", new ObjectProfilingInjector(counterClass)));
+//        PackManager.v().getPack("jtp").add(new Transform("jtp.test", new TypeProfilingInjector(counterClass)));
+//        PackManager.v().getPack("jtp").add(new Transform("jtp.myLogger", new FunctionTracker(counterClass)));
         // PRINT STAGE
-        PackManager.v().getPack("jtp").add(new Transform("jtp.print", new BodyTransformer() {
-            @Override
-            protected void internalTransform(Body b, String phaseName, Map<String, String> options) {
-                // First we filter out Android framework methods
-                if(AndroidUtil.isAndroidMethod(b.getMethod()))
-                    return;
-                lock.lock();
-                JimpleBody body = (JimpleBody) b;
-                System.out.println(body.toString());
-                lock.unlock();
-            }
-        }));
+//        PackManager.v().getPack("jtp").add(new Transform("jtp.print", new BodyTransformer() {
+//            @Override
+//            protected void internalTransform(Body b, String phaseName, Map<String, String> options) {
+//                // First we filter out Android framework methods
+//                if(AndroidUtil.isAndroidMethod(b.getMethod()))
+//                    return;
+//                lock.lock();
+//                JimpleBody body = (JimpleBody) b;
+//                System.out.println(body.toString());
+//                lock.unlock();
+//            }
+//        }));
         // Run Soot packs (note that our transformer pack is added to the phase "jtp")
         PackManager.v().runPacks();
         // Write the result of packs in outputPath
         PackManager.v().writeOutput();
     }
 
-    static class ProfilingCodeInjector extends BodyTransformer {
+    static SootClass createCounterClass(String packageName) {
+        String signature = packageName + ".StaticCounter";
+        SootClass counterClass = new SootClass(signature, Modifier.PUBLIC);
+        counterClass.setSuperclass(Scene.v().getSootClass("java.lang.Object")); 
+        counterClass.setApplicationClass();
+        return counterClass;
+    }
+
+    // The following functions are for counting reads/writes at 
+    // the level of OBJECTS
+    static class ObjectProfilingInjector extends BodyTransformer {
+
+        SootClass counterClass;
+        HashMap <String, SootField> classNamesToCounters;
+
+        public ObjectProfilingInjector(SootClass counterClass) {
+            this.counterClass = counterClass;
+            this.classNamesToCounters = new HashMap<>();
+        }
+
+        @Override
+        protected void internalTransform(Body b, String phaseName, Map<String, String> options) {
+            // First we filter out Android framework methods
+            if (AndroidUtil.isAndroidMethod(b.getMethod())) {
+                return;
+            }
+            lock.lock();
+            // For every class, add a new static counter variable
+            // to CounterClass. Then add a new serial field to the
+            // current class along with a getter and incrementer
+            // for it. The new serial field should be set to the
+            // static counter + 1
+            SootClass currentClass = b.getMethod().getDeclaringClass();
+            System.out.println(currentClass.getName());
+            if (this.classNamesToCounters.containsKey(currentClass.getName())) {
+                lock.unlock();
+                return;
+            }
+            SootField staticCounter = addStaticCounter(currentClass.getName(), this.counterClass); 
+            this.classNamesToCounters.put(currentClass.getName(), staticCounter);
+            SootField serialField = addSerialField(this.currentClass);
+            List<SootMethod> methods = currentClass.getMethods();
+            for (SootMethod s : methods) {
+                
+                System.out.println("\t" + s.getName());
+                System.out.println("\tis constructor ? " + s.isConstructor());
+            }
+//            JimpleBody body = (JimpleBody) b;
+            lock.unlock();
+        }
+    }
+
+    static void addSerialInitialization(JimpleBody body, SootField serialField, SootField staticCounterField, SootMethod constructor) {
+        if (!constructor.isConstructor()) {
+            return;
+        }
+        UnitPatchingChain units = body.getUnits();
+
+        // serial = staticCounter
+        units.add(Jimple.v().newAssignStmt(serialField, 
+            Jimple.v().newStaticFieldRef(staticCounterField.makeRef())));
+
+        // staticCounter += 1 
+        Local counterLocal = InstrumentUtil.generateNewLocal(body, IntType.v());
+        units.add(Jimple.v().newAssignStmt(counterLocal, 
+            Jimple.v().newStaticFieldRef(staticCounterField.makeRef())));
+        units.add(Jimple.v().newAssignStmt(counterLocal, 
+                Jimple.v().newAddExpr(counterLocal, IntConstant.v(1))));
+        units.add(Jimple.v().newAssignStmt(Jimple.v().newStaticFieldRef(counterField.makeRef()), counterLocal));
+// TODO: Uncomment to add log
+//        units.addAll(InstrumentUtil.generateLogStmts(body, " counter = ", counterLocal));
+        body.validate(); 
+       
+    }
+
+    // The following functions are for counting reads/writes at 
+    // the level of TYPES
+
+    static class TypeProfilingInjector extends BodyTransformer {
 
         SootClass counterClass;
         HashMap<String,SootMethod> classToWriteMethods = new HashMap<String, SootMethod>();
         HashMap<String,SootMethod> classToReadMethods = new HashMap<String, SootMethod>();
-        public ProfilingCodeInjector(SootClass counterClass) {
+        public TypeProfilingInjector(SootClass counterClass) {
             this.counterClass = counterClass;
         }
 
@@ -89,14 +169,6 @@ public class AndroidLogger {
             instrumentBody(body, this.counterClass, this.classToReadMethods, this.classToWriteMethods);
             lock.unlock();
         }
-    }
-
-    static SootClass createCounterClass(String packageName) {
-        String signature = packageName + ".StaticCounter";
-        SootClass counterClass = new SootClass(signature, Modifier.PUBLIC);
-        counterClass.setSuperclass(Scene.v().getSootClass("java.lang.Object")); 
-        counterClass.setApplicationClass();
-        return counterClass;
     }
 
     static String findClassName(JInstanceFieldRef fieldRef) {
@@ -274,7 +346,7 @@ public class AndroidLogger {
         String [] strArray = fullClassName.split("\\.");
         String typeName = strArray[strArray.length - 1];
         String joinedName = String.join("", strArray);
-        SootField readCounter = addCounter(joinedName + "Read", counterClass);
+        SootField readCounter = addStaticCounter(joinedName + "Read", counterClass);
         SootMethod readIncMethod = createMethod(counterClass,  
             joinedName + "Read", fullClassName + " read", readCounter);
         return readIncMethod;
@@ -284,7 +356,7 @@ public class AndroidLogger {
         String [] strArray = fullClassName.split("\\.");
         String typeName = strArray[strArray.length - 1];
         String joinedName = String.join("", strArray);
-        SootField writeCounter = addCounter(joinedName + "Write", counterClass);
+        SootField writeCounter = addStaticCounter(joinedName + "Write", counterClass);
         SootMethod writeIncMethod = createMethod(counterClass, 
             joinedName + "Write", fullClassName + " write", writeCounter);
         return writeIncMethod;
@@ -293,18 +365,26 @@ public class AndroidLogger {
         String [] strArray = fullFunctionName.split("\\.");
         String functionName = strArray[strArray.length - 1];
         String joinedName = String.join("", strArray);
-        SootField functionCounter = addCounter(joinedName + "Call", counterClass);
+        SootField functionCounter = addStaticCounter(joinedName + "Call", counterClass);
         SootMethod functionIncMethod = createMethod(counterClass, 
             joinedName + "Call", fullFunctionName + " function call", functionCounter);
         return functionIncMethod;
     }
 
     // Create new counter for every new object type encountered
-    static SootField addCounter(String name, SootClass counterClass) {
+    static SootField addStaticCounter(String name, SootClass counterClass) {
         SootField counterField = new SootField(name + "Counter", 
             IntType.v(), Modifier.PUBLIC | Modifier.STATIC);
         counterClass.addField(counterField);
         return counterField;
+    }
+    
+    // Field to denote unique id for an object
+    static SootField addSerialField(SootClass currentClass) {
+        SootField serialField = new SootField("serial",
+            IntType.v());
+        currentClass.addField(serialField);
+        return serialField;
     }
 
     static SootMethod createMethod(SootClass counterClass, String name, String nameForLog, SootField counterField) {
@@ -336,7 +416,8 @@ public class AndroidLogger {
         name = name.replace(">", "");
         return method.getDeclaringClass().getName() + "_" + name;
     }
- 
+
+    // The following code is for tracking FUNCTIONS 
     static class FunctionTracker extends BodyTransformer {
 
         SootClass counterClass;
