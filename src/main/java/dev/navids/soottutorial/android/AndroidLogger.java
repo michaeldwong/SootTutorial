@@ -54,18 +54,18 @@ public class AndroidLogger {
 //        PackManager.v().getPack("jtp").add(new Transform("jtp.test", new TypeProfilingInjector(counterClass)));
 //        PackManager.v().getPack("jtp").add(new Transform("jtp.myLogger", new FunctionTracker(counterClass)));
         // PRINT STAGE
-//        PackManager.v().getPack("jtp").add(new Transform("jtp.print", new BodyTransformer() {
-//            @Override
-//            protected void internalTransform(Body b, String phaseName, Map<String, String> options) {
-//                // First we filter out Android framework methods
-//                if(AndroidUtil.isAndroidMethod(b.getMethod()))
-//                    return;
-//                lock.lock();
-//                JimpleBody body = (JimpleBody) b;
-//                System.out.println(body.toString());
-//                lock.unlock();
-//            }
-//        }));
+        PackManager.v().getPack("jtp").add(new Transform("jtp.print", new BodyTransformer() {
+            @Override
+            protected void internalTransform(Body b, String phaseName, Map<String, String> options) {
+                // First we filter out Android framework methods
+                if(AndroidUtil.isAndroidMethod(b.getMethod()))
+                    return;
+                lock.lock();
+                JimpleBody body = (JimpleBody) b;
+                System.out.println(body.toString());
+                lock.unlock();
+            }
+        }));
         // Run Soot packs (note that our transformer pack is added to the phase "jtp")
         PackManager.v().runPacks();
         // Write the result of packs in outputPath
@@ -85,11 +85,11 @@ public class AndroidLogger {
     static class ObjectProfilingInjector extends BodyTransformer {
 
         SootClass counterClass;
-        HashMap <String, SootField> classNamesToCounters;
+        HashMap <String, SerialPair> classNamesToSerialPairs;
 
         public ObjectProfilingInjector(SootClass counterClass) {
             this.counterClass = counterClass;
-            this.classNamesToCounters = new HashMap<>();
+            this.classNamesToSerialPairs = new HashMap<>();
         }
 
         @Override
@@ -105,46 +105,65 @@ public class AndroidLogger {
             // for it. The new serial field should be set to the
             // static counter + 1
             SootClass currentClass = b.getMethod().getDeclaringClass();
-            System.out.println(currentClass.getName());
-            if (this.classNamesToCounters.containsKey(currentClass.getName())) {
+            if (!b.getMethod().isConstructor()) {
                 lock.unlock();
                 return;
             }
-            SootField staticCounter = addStaticCounter(currentClass.getName(), this.counterClass); 
-            this.classNamesToCounters.put(currentClass.getName(), staticCounter);
-            SootField serialField = addSerialField(this.currentClass);
-            List<SootMethod> methods = currentClass.getMethods();
-            for (SootMethod s : methods) {
-                
-                System.out.println("\t" + s.getName());
-                System.out.println("\tis constructor ? " + s.isConstructor());
+            SootField staticCounter = null;
+            SootField serialField = null;
+            if (this.classNamesToSerialPairs.containsKey(currentClass.getName())) {
+                SerialPair pair = this.classNamesToSerialPairs.get(currentClass.getName());
+                staticCounter = pair.staticCounter;
+                serialField = pair.serialField;
             }
-//            JimpleBody body = (JimpleBody) b;
+            else {
+                staticCounter = addStaticCounter(currentClass.getName(), this.counterClass); 
+                serialField = addSerialField(currentClass);
+                this.classNamesToSerialPairs.put(currentClass.getName(), 
+                    new SerialPair(staticCounter, serialField));
+            }
+            addSerialInitialization((JimpleBody)b, serialField, staticCounter, currentClass);
             lock.unlock();
         }
     }
 
-    static void addSerialInitialization(JimpleBody body, SootField serialField, SootField staticCounterField, SootMethod constructor) {
-        if (!constructor.isConstructor()) {
-            return;
-        }
+    static void addSerialInitialization(JimpleBody body, SootField serialField, SootField staticCounterField, SootClass currentClass) {
+
         UnitPatchingChain units = body.getUnits();
-
         // serial = staticCounter
-        units.add(Jimple.v().newAssignStmt(serialField, 
-            Jimple.v().newStaticFieldRef(staticCounterField.makeRef())));
 
-        // staticCounter += 1 
-        Local counterLocal = InstrumentUtil.generateNewLocal(body, IntType.v());
-        units.add(Jimple.v().newAssignStmt(counterLocal, 
-            Jimple.v().newStaticFieldRef(staticCounterField.makeRef())));
-        units.add(Jimple.v().newAssignStmt(counterLocal, 
-                Jimple.v().newAddExpr(counterLocal, IntConstant.v(1))));
-        units.add(Jimple.v().newAssignStmt(Jimple.v().newStaticFieldRef(counterField.makeRef()), counterLocal));
 // TODO: Uncomment to add log
 //        units.addAll(InstrumentUtil.generateLogStmts(body, " counter = ", counterLocal));
-        body.validate(); 
+        Iterator<Unit> it = units.iterator();
+        Value thisRefLocal = null;
+        while (it.hasNext()) {
+            Unit unit = it.next();
+            if (unit instanceof JIdentityStmt) {
+                Value rightOp = ((JIdentityStmt)unit).getRightOp();
+                if (rightOp instanceof ThisRef) {
+                    thisRefLocal = ((JIdentityStmt)unit).getLeftOp();
+                }
+            }
+        }
+        InstanceFieldRef serialFieldRef = Jimple.v().newInstanceFieldRef(thisRefLocal, serialField.makeRef());
        
+        Local counterLocal = InstrumentUtil.generateNewLocal(body, IntType.v());
+        Unit u1 = Jimple.v().newAssignStmt(counterLocal, Jimple.v().newStaticFieldRef(staticCounterField.makeRef()));
+ 
+        Unit u2 = Jimple.v().newAssignStmt(counterLocal, 
+                Jimple.v().newAddExpr(counterLocal, IntConstant.v(1)));
+
+        Unit u3 = Jimple.v().newAssignStmt(serialFieldRef, counterLocal);
+        Unit u4 = Jimple.v().newAssignStmt(Jimple.v().newStaticFieldRef(staticCounterField.makeRef()), counterLocal);
+
+        units.insertBefore(u4, body.getFirstNonIdentityStmt());
+        units.insertBefore(u3, body.getFirstNonIdentityStmt());
+        units.insertBefore(u2, body.getFirstNonIdentityStmt());
+        units.insertBefore(u1, body.getFirstNonIdentityStmt());
+
+
+        body.validate(); 
+
     }
 
     // The following functions are for counting reads/writes at 
@@ -459,3 +478,11 @@ class InsertionPair<E> {
     }
 }
 
+class SerialPair {
+    protected final SootField staticCounter;
+    protected final SootField serialField;
+    public SerialPair(SootField staticCounter, SootField serialField) {
+        this.staticCounter = staticCounter;
+        this.serialField = serialField; 
+    }
+}
