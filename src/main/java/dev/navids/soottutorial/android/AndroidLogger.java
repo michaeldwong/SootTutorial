@@ -63,6 +63,10 @@ public class AndroidLogger {
                 lock.lock();
                 JimpleBody body = (JimpleBody) b;
                 System.out.println(body.toString());
+                List<SootMethod> methods = body.getMethod().getDeclaringClass().getMethods();
+                for (SootMethod m : methods) {
+                    System.out.println("\t" + m.getName());
+                }
                 lock.unlock();
             }
         }));
@@ -126,6 +130,8 @@ public class AndroidLogger {
                 writesField = addClassField("writes", currentClass);
                 this.classNamesToObjectData.put(currentClass.getName(), 
                     new ObjectProfilingData(staticCounter, serialField, readsField, writesField));
+                createGetter(currentClass, "getReads", readsField);
+                createGetter(currentClass, "getWrites", writesField);
             }
             addSerialInitialization((JimpleBody)b, serialField, staticCounter, currentClass);
             lock.unlock();
@@ -133,7 +139,6 @@ public class AndroidLogger {
     }
 
     static void addSerialInitialization(JimpleBody body, SootField serialField, SootField staticCounterField, SootClass currentClass) {
-
         UnitPatchingChain units = body.getUnits();
         // serial = staticCounter
 
@@ -151,13 +156,10 @@ public class AndroidLogger {
             }
         }
         InstanceFieldRef serialFieldRef = Jimple.v().newInstanceFieldRef(thisRefLocal, serialField.makeRef());
-       
         Local counterLocal = InstrumentUtil.generateNewLocal(body, IntType.v());
         Unit u1 = Jimple.v().newAssignStmt(counterLocal, Jimple.v().newStaticFieldRef(staticCounterField.makeRef()));
- 
         Unit u2 = Jimple.v().newAssignStmt(counterLocal, 
                 Jimple.v().newAddExpr(counterLocal, IntConstant.v(1)));
-
         Unit u3 = Jimple.v().newAssignStmt(serialFieldRef, counterLocal);
         Unit u4 = Jimple.v().newAssignStmt(Jimple.v().newStaticFieldRef(staticCounterField.makeRef()), counterLocal);
 
@@ -168,6 +170,28 @@ public class AndroidLogger {
         body.validate(); 
     }
 
+    static SootMethod createGetter(SootClass currentClass, String name, SootField currentField) {
+        String methodName = name;
+        SootMethod getter = new SootMethod(methodName,
+            Arrays.asList(new Type[]{}),
+            IntType.v(), Modifier.PUBLIC);
+        currentClass.addMethod(getter);
+        JimpleBody body = Jimple.v().newBody(getter);
+        UnitPatchingChain units = body.getUnits();
+        ThisRef thisRef = Jimple.v().newThisRef(currentClass.getType());
+        Local base = InstrumentUtil.generateNewLocal(body, currentClass.getType());
+        IdentityStmt idStmt = Jimple.v().newIdentityStmt(base, thisRef);
+        units.add(idStmt);
+        InstanceFieldRef instanceFieldRef = Jimple.v().newInstanceFieldRef(base, currentField.makeRef());
+        Local counterLocal = InstrumentUtil.generateNewLocal(body, IntType.v());
+        Unit u1 = Jimple.v().newAssignStmt(counterLocal, instanceFieldRef);
+        Unit u2 = Jimple.v().newReturnStmt(counterLocal);
+        units.add(u1);
+        units.add(u2);
+        body.validate();
+        getter.setActiveBody(body);
+        return getter;
+    }
 
     // The following functions are for counting reads/writes at 
     // the level of TYPES
