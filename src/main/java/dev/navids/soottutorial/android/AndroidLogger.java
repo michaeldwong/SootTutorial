@@ -49,8 +49,15 @@ public class AndroidLogger {
         // Find the package name of the APK
         String packageName = AndroidUtil.getPackageName(apkPath);
         SootClass counterClass = createCounterClass(packageName);
+        HashMap <String, SootMethod> classNamesToReadGetters = new HashMap<>();
+        HashMap <String, SootMethod> classNamesToWriteGetters = new HashMap<>();
 
-        PackManager.v().getPack("jtp").add(new Transform("jtp.test", new ObjectProfilingInjector(counterClass)));
+        PackManager.v().getPack("jtp").add(
+            new Transform("jtp.test", 
+                new ObjectProfilingInjector(counterClass, classNamesToReadGetters, classNamesToWriteGetters)
+            )
+        );
+
 //        PackManager.v().getPack("jtp").add(new Transform("jtp.test", new TypeProfilingInjector(counterClass)));
 //        PackManager.v().getPack("jtp").add(new Transform("jtp.myLogger", new FunctionTracker(counterClass)));
         // PRINT STAGE
@@ -61,12 +68,10 @@ public class AndroidLogger {
                 if(AndroidUtil.isAndroidMethod(b.getMethod()))
                     return;
                 lock.lock();
+
                 JimpleBody body = (JimpleBody) b;
                 System.out.println(body.toString());
                 List<SootMethod> methods = body.getMethod().getDeclaringClass().getMethods();
-                for (SootMethod m : methods) {
-                    System.out.println("\t" + m.getName());
-                }
                 lock.unlock();
             }
         }));
@@ -90,9 +95,15 @@ public class AndroidLogger {
 
         SootClass counterClass;
         HashMap <String, ObjectProfilingData> classNamesToObjectData;
-        public ObjectProfilingInjector(SootClass counterClass) {
+        HashMap <String, SootMethod> classNamesToReadGetters;
+        HashMap <String, SootMethod> classNamesToWriteGetters;
+        public ObjectProfilingInjector(SootClass counterClass, 
+               HashMap<String,SootMethod> classNamesToReadGetters, 
+               HashMap<String,SootMethod> classNamesToWriteGetters) {
             this.counterClass = counterClass;
             this.classNamesToObjectData = new HashMap<>();
+            this.classNamesToReadGetters = classNamesToReadGetters;
+            this.classNamesToWriteGetters = classNamesToWriteGetters;
         }
 
         @Override
@@ -130,8 +141,13 @@ public class AndroidLogger {
                 writesField = addClassField("writes", currentClass);
                 this.classNamesToObjectData.put(currentClass.getName(), 
                     new ObjectProfilingData(staticCounter, serialField, readsField, writesField));
-                createGetter(currentClass, "getReads", readsField);
-                createGetter(currentClass, "getWrites", writesField);
+                String [] strArray = currentClass.getName().split("\\.");
+                String className = strArray[strArray.length - 1];
+                String joinedClassName = String.join("", strArray);
+                this.classNamesToReadGetters.put(joinedClassName,
+                    createGetter(currentClass, "getReads", readsField));
+                this.classNamesToWriteGetters.put(joinedClassName, 
+                    createGetter(currentClass, "getWrites", writesField));
             }
             addSerialInitialization((JimpleBody)b, serialField, staticCounter, currentClass);
             lock.unlock();
