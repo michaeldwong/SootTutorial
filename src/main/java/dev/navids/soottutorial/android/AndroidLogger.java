@@ -19,10 +19,10 @@ import java.util.concurrent.locks.*;
 public class AndroidLogger {
 
     private final static String USER_HOME = System.getProperty("user.home");
-    private static String androidJar = "/usr/lib/android-sdk/platforms/";
+    private static String androidJar = USER_HOME + "/Documents/android/platforms";
     private static HashSet<String> generatedFunctionNames = new HashSet<String>();
     static String androidDemoPath = System.getProperty("user.dir") + File.separator + "demo" + File.separator + "Android";
-    static String apkPath = androidDemoPath + File.separator + "/calc.apk";
+    static String apkPath = androidDemoPath + File.separator + "/brilliant.apk";
     static String outputPath = androidDemoPath + File.separator + "/Instrumented";
 
     private static String INT = "int";
@@ -56,7 +56,6 @@ public class AndroidLogger {
                 new ObjectProfilingInjector(counterClass, classNamesToReadGetters, classNamesToWriteGetters)
             )
         );
-
         PackManager.v().getPack("jtp").add(new Transform("jtp.recordAccesses", new BodyTransformer() {
             @Override
             protected void internalTransform(Body b, String phaseName, Map<String, String> options) {
@@ -116,7 +115,7 @@ public class AndroidLogger {
         }));
 
 //        PackManager.v().getPack("jtp").add(new Transform("jtp.test", new TypeProfilingInjector(counterClass)));
-        PackManager.v().getPack("jtp").add(new Transform("jtp.myLogger", new FunctionTracker(counterClass)));
+//        PackManager.v().getPack("jtp").add(new Transform("jtp.myLogger", new FunctionTracker(counterClass)));
         // PRINT STAGE
         PackManager.v().getPack("jtp").add(new Transform("jtp.print", new BodyTransformer() {
             @Override
@@ -125,10 +124,10 @@ public class AndroidLogger {
                 if(AndroidUtil.isAndroidMethod(b.getMethod()))
                     return;
                 lock.lock();
-
                 JimpleBody body = (JimpleBody) b;
+                System.out.println("Class : " + body.getMethod().getDeclaringClass().getName());
                 System.out.println(body.toString());
-                List<SootMethod> methods = body.getMethod().getDeclaringClass().getMethods();
+
                 lock.unlock();
             }
         }));
@@ -193,19 +192,19 @@ public class AndroidLogger {
                 writesField = data.writesField;
             }
             else {
-                staticCounter = addStaticCounter(currentClass.getName(), this.counterClass); 
+                String [] strArray = currentClass.getName().split("\\.");
+                String className = strArray[strArray.length - 1];
+                String joinedClassName = String.join("", strArray);
+                staticCounter = addStaticCounter(joinedClassName, this.counterClass);
                 serialField = addClassField("serial", currentClass);
                 readsField = addClassField("reads", currentClass);
                 writesField = addClassField("writes", currentClass);
                 this.classNamesToObjectData.put(currentClass.getName(), 
                     new ObjectProfilingData(staticCounter, serialField, readsField, writesField));
-                String [] strArray = currentClass.getName().split("\\.");
-                String className = strArray[strArray.length - 1];
-                String joinedClassName = String.join("", strArray);
                 this.classNamesToReadGetters.put(joinedClassName,
-                    createGetter(currentClass, "getReads", readsField, currentClass.getName() + " reads = "));
+                    createGetter(currentClass, "incReads", readsField, currentClass.getName() + " object reads = "));
                 this.classNamesToWriteGetters.put(joinedClassName, 
-                    createGetter(currentClass, "getWrites", writesField, currentClass.getName() + " writes = "));
+                    createGetter(currentClass, "incWrites", writesField, currentClass.getName() + " object writes = "));
             }
             addSerialInitialization((JimpleBody)b, serialField, staticCounter, currentClass);
             lock.unlock();
@@ -244,6 +243,7 @@ public class AndroidLogger {
     }
 
     static SootMethod createGetter(SootClass currentClass, String name, SootField currentField, String logMessage) {
+
         String methodName = name;
         SootMethod getter = new SootMethod(methodName,
             Arrays.asList(new Type[]{}),
@@ -251,6 +251,7 @@ public class AndroidLogger {
         currentClass.addMethod(getter);
         JimpleBody body = Jimple.v().newBody(getter);
         UnitPatchingChain units = body.getUnits();
+
         ThisRef thisRef = Jimple.v().newThisRef(currentClass.getType());
         Local base = InstrumentUtil.generateNewLocal(body, currentClass.getType());
         IdentityStmt idStmt = Jimple.v().newIdentityStmt(base, thisRef);
