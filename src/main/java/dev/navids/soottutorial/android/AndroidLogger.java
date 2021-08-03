@@ -235,6 +235,9 @@ public class AndroidLogger {
                 Jimple.v().newAddExpr(counterLocal, IntConstant.v(1)));
         Unit u3 = Jimple.v().newAssignStmt(serialFieldRef, counterLocal);
         Unit u4 = Jimple.v().newAssignStmt(Jimple.v().newStaticFieldRef(staticCounterField.makeRef()), counterLocal);
+
+        units.insertBefore(InstrumentUtil.generateLogStmts(body, currentClass.getName() + " intiailized id = ", 
+            counterLocal), body.getFirstNonIdentityStmt());
         units.insertBefore(u4, body.getFirstNonIdentityStmt());
         units.insertBefore(u3, body.getFirstNonIdentityStmt());
         units.insertBefore(u2, body.getFirstNonIdentityStmt());
@@ -267,13 +270,13 @@ public class AndroidLogger {
 
         // Get serial value for log
         SootField serialField = currentClass.getFieldByName("serial");
-        InstanceFieldRef serialInstanceField = Jimple.v().newInstanceFieldRef(base, serialField.makeRef());
+        InstanceFieldRef serialFieldRef = Jimple.v().newInstanceFieldRef(base, serialField.makeRef());
         Local serialLocal = InstrumentUtil.generateNewLocal(body, IntType.v());
-        units.add(Jimple.v().newAssignStmt(serialLocal, serialInstanceField));
-        units.addAll(InstrumentUtil.generateLogStmts(body, currentClass.getName() + " serial id = ", serialLocal));
+        units.add(Jimple.v().newAssignStmt(serialLocal, serialFieldRef));
+        units.addAll(InstrumentUtil.generateLogStmts(body, "\t\t" + currentClass.getName() + " serial id = ", serialLocal));
 
         // Log for reads/writes count
-        units.addAll(InstrumentUtil.generateLogStmts(body, logMessage, counterLocal));
+        units.addAll(InstrumentUtil.generateLogStmts(body, "\t\t" + logMessage, counterLocal));
         units.add(Jimple.v().newReturnVoidStmt());
         body.validate();
         getter.setActiveBody(body);
