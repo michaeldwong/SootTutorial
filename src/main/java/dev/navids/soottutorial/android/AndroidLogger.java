@@ -80,6 +80,7 @@ public class AndroidLogger {
                             String joinedClassName = String.join("", strArray);
                             System.out.println(joinedClassName + " write");
                             if (!classNamesToWriteGetters.containsKey(joinedClassName)) {
+                                // TODO: FIx this
                                 System.out.println(joinedClassName + " not found in classNamesToWriteGetters");
                                 continue;
                             }
@@ -96,6 +97,7 @@ public class AndroidLogger {
                             String className = strArray[strArray.length - 1];
                             String joinedClassName = String.join("", strArray);
                             if (!classNamesToReadGetters.containsKey(joinedClassName)) {
+                                // TODO: Fix this
                                 System.out.println(joinedClassName + " not found in classNamesToReadGetters");
                                 continue;
                             }
@@ -228,6 +230,9 @@ public class AndroidLogger {
                 }
             }
         }
+        if (thisRefLocal == null) {
+            thisRefLocal = Jimple.v().newThisRef(currentClass.getType());
+        }
         InstanceFieldRef serialFieldRef = Jimple.v().newInstanceFieldRef(thisRefLocal, serialField.makeRef());
         Local counterLocal = InstrumentUtil.generateNewLocal(body, IntType.v());
         Unit u1 = Jimple.v().newAssignStmt(counterLocal, Jimple.v().newStaticFieldRef(staticCounterField.makeRef()));
@@ -238,13 +243,50 @@ public class AndroidLogger {
 
         units.insertBefore(InstrumentUtil.generateLogStmts(body, currentClass.getName() + " intiailized id = ", 
             counterLocal), body.getFirstNonIdentityStmt());
+
         units.insertBefore(u4, body.getFirstNonIdentityStmt());
         units.insertBefore(u3, body.getFirstNonIdentityStmt());
         units.insertBefore(u2, body.getFirstNonIdentityStmt());
         units.insertBefore(u1, body.getFirstNonIdentityStmt());
+        /*
+        try {
+            SootMethod foundHashCodeMethod = currentClass.getMethodByName("getHashCode");
+        }
+        catch (Exception e) {
+            SootMethod callHashCode = createHashCodeMethod(currentClass, thisRefLocal);
+            Unit call = Jimple.v().newInvokeStmt(Jimple.v().newVirtualInvokeExpr((Local)thisRefLocal, callHashCode.makeRef()));
+            units.insertBefore(call, body.getFirstNonIdentityStmt());
+        }
+        */
         body.validate(); 
     }
 
+    /*
+    static SootMethod createHashCodeMethod(SootClass currentClass, Value thisRefLocal) {
+        SootMethod method = new SootMethod("getHashCode",
+            Arrays.asList(new Type[]{}),
+            VoidType.v(), Modifier.PUBLIC);
+        currentClass.addMethod(method);
+        JimpleBody body = Jimple.v().newBody(method);
+        UnitPatchingChain units = body.getUnits();
+
+        ThisRef thisRef = Jimple.v().newThisRef(currentClass.getType());
+        Local base = InstrumentUtil.generateNewLocal(body, currentClass.getType());
+        IdentityStmt idStmt = Jimple.v().newIdentityStmt(base, thisRef);
+        units.add(idStmt);
+        SootClass c = Scene.v().getSootClass("java.lang.System");
+        SootMethod sm = c.getMethodByName("identityHashCode");
+        StaticInvokeExpr invokeExpr = Jimple.v().newStaticInvokeExpr(sm.makeRef(), base);
+        Local hashLocal = InstrumentUtil.generateNewLocal(body, IntType.v());
+        units.add(Jimple.v().newAssignStmt(hashLocal, invokeExpr));
+        units.addAll(InstrumentUtil.generateLogStmts(body, "HashCode = ", hashLocal));
+
+        units.add(Jimple.v().newReturnVoidStmt());
+        body.validate();
+        method.setActiveBody(body);
+        return method;
+    }
+    */
     static SootMethod createGetter(SootClass currentClass, String name, SootField currentField, String logMessage) {
 
         String methodName = name;
@@ -273,10 +315,10 @@ public class AndroidLogger {
         InstanceFieldRef serialFieldRef = Jimple.v().newInstanceFieldRef(base, serialField.makeRef());
         Local serialLocal = InstrumentUtil.generateNewLocal(body, IntType.v());
         units.add(Jimple.v().newAssignStmt(serialLocal, serialFieldRef));
-        units.addAll(InstrumentUtil.generateLogStmts(body, "\t\t" + currentClass.getName() + " serial id = ", serialLocal));
+        units.addAll(InstrumentUtil.generateLogStmts(body, currentClass.getName() + " serial id = ", serialLocal));
 
         // Log for reads/writes count
-        units.addAll(InstrumentUtil.generateLogStmts(body, "\t\t" + logMessage, counterLocal));
+        units.addAll(InstrumentUtil.generateLogStmts(body, logMessage, counterLocal));
         units.add(Jimple.v().newReturnVoidStmt());
         body.validate();
         getter.setActiveBody(body);
