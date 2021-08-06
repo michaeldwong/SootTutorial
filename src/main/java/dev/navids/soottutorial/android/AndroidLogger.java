@@ -36,7 +36,7 @@ public class AndroidLogger {
 
     static ReentrantLock lock = new ReentrantLock();
 
-    public static void main(String[] args){
+    public static void main(String[] args) {
         if(System.getenv().containsKey("ANDROID_HOME"))
             androidJar = System.getenv("ANDROID_HOME")+ File.separator+"platforms";
         // Clean the outputPath
@@ -56,79 +56,27 @@ public class AndroidLogger {
                 new ObjectProfilingInjector(counterClass, classNamesToReadGetters, classNamesToWriteGetters)
             )
         );
-        PackManager.v().getPack("jtp").add(new Transform("jtp.recordAccesses", new BodyTransformer() {
-            @Override
-            protected void internalTransform(Body b, String phaseName, Map<String, String> options) {
-                // First we filter out Android framework methods
-                if (AndroidUtil.isAndroidMethod(b.getMethod()) || b.getMethod().isConstructor()) {
-                    return;
-                }
-                lock.lock();
-                JimpleBody body = (JimpleBody) b;
-                UnitPatchingChain units = body.getUnits();
-                Iterator<Unit> it = units.iterator();
-                ArrayList<InsertionPair<Unit>> insertionPairs = new ArrayList<InsertionPair<Unit>>();
-                while (it.hasNext()) {
-                    Unit unit = it.next();
-                    if (unit instanceof JAssignStmt) {
-                        Value lhs = ((JAssignStmt)unit).getLeftOp();
-                        Value rhs = ((JAssignStmt)unit).getRightOp();
-                        if (lhs instanceof JInstanceFieldRef) {
-                            String fullClassName = findClassName((JInstanceFieldRef)lhs);
-                            String [] strArray = fullClassName.split("\\.");
-                            String className = strArray[strArray.length - 1];
-                            String joinedClassName = String.join("", strArray);
-                            System.out.println(joinedClassName + " write");
-                            if (!classNamesToWriteGetters.containsKey(joinedClassName)) {
-                                // TODO: FIx this
-                                System.out.println(joinedClassName + " not found in classNamesToWriteGetters");
-                                continue;
-                            }
+        PackManager.v().getPack("jtp").add(
+            new Transform("jtp.recordAccesses", 
+                new ObjectLoggingInjector(classNamesToReadGetters, classNamesToWriteGetters)
+            )
+        );
 
-                            SootMethod method = classNamesToWriteGetters.get(joinedClassName);
-                            Local base = (Local)((JInstanceFieldRef)lhs).getBase();
-                            Unit call = Jimple.v().newInvokeStmt(Jimple.v().newVirtualInvokeExpr(base, method.makeRef()));
-                            insertionPairs.add(new InsertionPair<Unit>(call, unit));
-
-                        }
-                        if (rhs instanceof JInstanceFieldRef) {
-                            String fullClassName = findClassName((JInstanceFieldRef)rhs);
-                            String [] strArray = fullClassName.split("\\.");
-                            String className = strArray[strArray.length - 1];
-                            String joinedClassName = String.join("", strArray);
-                            if (!classNamesToReadGetters.containsKey(joinedClassName)) {
-                                // TODO: Fix this
-                                System.out.println(joinedClassName + " not found in classNamesToReadGetters");
-                                continue;
-                            }
-                            SootMethod method = classNamesToReadGetters.get(joinedClassName);
-                            Local base = (Local)((JInstanceFieldRef)rhs).getBase();
-                            Unit call = Jimple.v().newInvokeStmt(Jimple.v().newVirtualInvokeExpr(base, method.makeRef()));
-                            insertionPairs.add(new InsertionPair<Unit>(call, unit));
-                        }
-                    }
-                }
-                for (InsertionPair<Unit> pair : insertionPairs) {
-                    units.insertBefore(pair.toInsert, pair.point);
-                }
-                body.validate();
-                lock.unlock();
-            }
-        }));
-
-//        PackManager.v().getPack("jtp").add(new Transform("jtp.test", new TypeProfilingInjector(counterClass)));
-//        PackManager.v().getPack("jtp").add(new Transform("jtp.myLogger", new FunctionTracker(counterClass)));
+////        PackManager.v().getPack("jtp").add(new Transform("jtp.test", new TypeProfilingInjector(counterClass)));
+////        PackManager.v().getPack("jtp").add(new Transform("jtp.myLogger", new FunctionTracker(counterClass)));
         // PRINT STAGE
         PackManager.v().getPack("jtp").add(new Transform("jtp.print", new BodyTransformer() {
             @Override
             protected void internalTransform(Body b, String phaseName, Map<String, String> options) {
                 // First we filter out Android framework methods
-                if(AndroidUtil.isAndroidMethod(b.getMethod()))
+                if (AndroidUtil.isAndroidMethod(b.getMethod())) {
+//                    System.out.println("Android framework Class: " + b.getMethod().getDeclaringClass().getName());
                     return;
+                }
                 lock.lock();
                 JimpleBody body = (JimpleBody) b;
-                System.out.println("Class : " + body.getMethod().getDeclaringClass().getName());
-                System.out.println(body.toString());
+//                System.out.println("Class : " + body.getMethod().getDeclaringClass().getName());
+//                System.out.println(body.toString());
 
                 lock.unlock();
             }
@@ -151,7 +99,7 @@ public class AndroidLogger {
     // The following functions are for counting reads/writes at 
     // the level of OBJECTS
     static class ObjectProfilingInjector extends BodyTransformer {
-
+    
         SootClass counterClass;
         HashMap <String, ObjectProfilingData> classNamesToObjectData;
         HashMap <String, SootMethod> classNamesToReadGetters;
@@ -203,6 +151,7 @@ public class AndroidLogger {
                 writesField = addClassField("writes", currentClass);
                 this.classNamesToObjectData.put(currentClass.getName(), 
                     new ObjectProfilingData(staticCounter, serialField, readsField, writesField));
+                System.out.println("ADding " + joinedClassName);
                 this.classNamesToReadGetters.put(joinedClassName,
                     createGetter(currentClass, "incReads", readsField, currentClass.getName() + " object reads = "));
                 this.classNamesToWriteGetters.put(joinedClassName, 
@@ -213,6 +162,71 @@ public class AndroidLogger {
         }
     }
 
+    static class ObjectLoggingInjector extends BodyTransformer {
+
+        HashMap <String, SootMethod> classNamesToReadGetters;
+        HashMap <String, SootMethod> classNamesToWriteGetters;
+        public ObjectLoggingInjector(HashMap<String,SootMethod> classNamesToReadGetters,
+               HashMap<String,SootMethod> classNamesToWriteGetters) {
+            this.classNamesToReadGetters = classNamesToReadGetters;
+            this.classNamesToWriteGetters = classNamesToWriteGetters;
+        }
+
+        @Override
+        protected void internalTransform(Body b, String phaseName, Map<String, String> options) {
+            // First we filter out Android framework methods
+            if (AndroidUtil.isAndroidMethod(b.getMethod()) || b.getMethod().isConstructor()) {
+                return;
+            }
+            lock.lock();
+            JimpleBody body = (JimpleBody) b;
+            UnitPatchingChain units = body.getUnits();
+            Iterator<Unit> it = units.iterator();
+            ArrayList<InsertionPair<Unit>> insertionPairs = new ArrayList<InsertionPair<Unit>>();
+            while (it.hasNext()) {
+                Unit unit = it.next();
+                if (unit instanceof JAssignStmt) {
+                    Value lhs = ((JAssignStmt)unit).getLeftOp();
+                    Value rhs = ((JAssignStmt)unit).getRightOp();
+                    if (lhs instanceof JInstanceFieldRef) {
+                        String fullClassName = findClassName((JInstanceFieldRef)lhs);
+                        String [] strArray = fullClassName.split("\\.");
+                        String className = strArray[strArray.length - 1];
+                        String joinedClassName = String.join("", strArray);
+                        System.out.println(joinedClassName + " write");
+                        if (!classNamesToWriteGetters.containsKey(joinedClassName)) {
+                            System.out.println(joinedClassName + " not found in classNamesToWriteGetters");
+                            continue;
+                        }
+                        SootMethod method = classNamesToWriteGetters.get(joinedClassName);
+                        Local base = (Local)((JInstanceFieldRef)lhs).getBase();
+                        Unit call = Jimple.v().newInvokeStmt(Jimple.v().newVirtualInvokeExpr(base, method.makeRef()));
+                        insertionPairs.add(new InsertionPair<Unit>(call, unit));
+                    }
+                    if (rhs instanceof JInstanceFieldRef) {
+                        String fullClassName = findClassName((JInstanceFieldRef)rhs);
+                        String [] strArray = fullClassName.split("\\.");
+                        String className = strArray[strArray.length - 1];
+                        String joinedClassName = String.join("", strArray);
+                        if (!classNamesToReadGetters.containsKey(joinedClassName)) {
+                            // TODO: Fix this
+                            System.out.println(joinedClassName + " not found in classNamesToReadGetters");
+                            continue;
+                        }
+                        SootMethod method = classNamesToReadGetters.get(joinedClassName);
+                        Local base = (Local)((JInstanceFieldRef)rhs).getBase();
+                        Unit call = Jimple.v().newInvokeStmt(Jimple.v().newVirtualInvokeExpr(base, method.makeRef()));
+                        insertionPairs.add(new InsertionPair<Unit>(call, unit));
+                    }
+                }
+            }
+            for (InsertionPair<Unit> pair : insertionPairs) {
+                units.insertBefore(pair.toInsert, pair.point);
+            }
+            body.validate();
+            lock.unlock();
+        }
+    }
     static void addSerialInitialization(JimpleBody body, SootField serialField, SootField staticCounterField, SootClass currentClass) {
         UnitPatchingChain units = body.getUnits();
         // serial = staticCounter
@@ -248,6 +262,8 @@ public class AndroidLogger {
         units.insertBefore(u3, body.getFirstNonIdentityStmt());
         units.insertBefore(u2, body.getFirstNonIdentityStmt());
         units.insertBefore(u1, body.getFirstNonIdentityStmt());
+
+
         /*
         try {
             SootMethod foundHashCodeMethod = currentClass.getMethodByName("getHashCode");
