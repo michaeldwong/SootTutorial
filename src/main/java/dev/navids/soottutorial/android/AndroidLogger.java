@@ -77,7 +77,6 @@ public class AndroidLogger {
                 JimpleBody body = (JimpleBody) b;
 //                System.out.println("Class : " + body.getMethod().getDeclaringClass().getName());
 //                System.out.println(body.toString());
-
                 lock.unlock();
             }
         }));
@@ -130,33 +129,15 @@ public class AndroidLogger {
                 lock.unlock();
                 return;
             }
-            SootField staticCounter = null;
-            SootField serialField = null;
-            SootField readsField = null;
-            SootField writesField = null;
-            if (this.classNamesToObjectData.containsKey(currentClass.getName())) {
-                ObjectProfilingData data = this.classNamesToObjectData.get(currentClass.getName());
-                staticCounter = data.staticCounter;
-                serialField = data.serialField;
-                readsField = data.readsField;
-                writesField = data.writesField;
+            if (!this.classNamesToObjectData.containsKey(currentClass.getName())) {
+                addObjectAccessFields(currentClass, this.counterClass, classNamesToObjectData, 
+                      classNamesToReadGetters, classNamesToWriteGetters);
             }
-            else {
-                String [] strArray = currentClass.getName().split("\\.");
-                String className = strArray[strArray.length - 1];
-                String joinedClassName = String.join("", strArray);
-                staticCounter = addStaticCounter(joinedClassName, this.counterClass);
-                serialField = addClassField("serial", currentClass);
-                readsField = addClassField("reads", currentClass);
-                writesField = addClassField("writes", currentClass);
-                this.classNamesToObjectData.put(currentClass.getName(), 
-                    new ObjectProfilingData(staticCounter, serialField, readsField, writesField));
-                System.out.println("ADding " + joinedClassName);
-                this.classNamesToReadGetters.put(joinedClassName,
-                    createGetter(currentClass, "incReads", readsField, currentClass.getName() + " object reads = "));
-                this.classNamesToWriteGetters.put(joinedClassName, 
-                    createGetter(currentClass, "incWrites", writesField, currentClass.getName() + " object writes = "));
-            }
+            ObjectProfilingData data = this.classNamesToObjectData.get(currentClass.getName());
+            SootField staticCounter = data.staticCounter;
+            SootField serialField = data.serialField;
+            SootField readsField = data.readsField;
+            SootField writesField = data.writesField;
             addSerialInitialization((JimpleBody)b, serialField, staticCounter, currentClass);
             lock.unlock();
         }
@@ -189,34 +170,16 @@ public class AndroidLogger {
                     Value lhs = ((JAssignStmt)unit).getLeftOp();
                     Value rhs = ((JAssignStmt)unit).getRightOp();
                     if (lhs instanceof JInstanceFieldRef) {
-                        String fullClassName = findClassName((JInstanceFieldRef)lhs);
-                        String [] strArray = fullClassName.split("\\.");
-                        String className = strArray[strArray.length - 1];
-                        String joinedClassName = String.join("", strArray);
-                        System.out.println(joinedClassName + " write");
-                        if (!classNamesToWriteGetters.containsKey(joinedClassName)) {
-                            System.out.println(joinedClassName + " not found in classNamesToWriteGetters");
-                            continue;
+                        if (invokeObjectMethods((JInstanceFieldRef)lhs, 
+                            insertionPairs, classNamesToWriteGetters, unit) != 0) {
+                            continue; 
                         }
-                        SootMethod method = classNamesToWriteGetters.get(joinedClassName);
-                        Local base = (Local)((JInstanceFieldRef)lhs).getBase();
-                        Unit call = Jimple.v().newInvokeStmt(Jimple.v().newVirtualInvokeExpr(base, method.makeRef()));
-                        insertionPairs.add(new InsertionPair<Unit>(call, unit));
                     }
                     if (rhs instanceof JInstanceFieldRef) {
-                        String fullClassName = findClassName((JInstanceFieldRef)rhs);
-                        String [] strArray = fullClassName.split("\\.");
-                        String className = strArray[strArray.length - 1];
-                        String joinedClassName = String.join("", strArray);
-                        if (!classNamesToReadGetters.containsKey(joinedClassName)) {
-                            // TODO: Fix this
-                            System.out.println(joinedClassName + " not found in classNamesToReadGetters");
+                        if (invokeObjectMethods((JInstanceFieldRef)rhs, 
+                            insertionPairs, classNamesToReadGetters, unit) != 0) {
                             continue;
                         }
-                        SootMethod method = classNamesToReadGetters.get(joinedClassName);
-                        Local base = (Local)((JInstanceFieldRef)rhs).getBase();
-                        Unit call = Jimple.v().newInvokeStmt(Jimple.v().newVirtualInvokeExpr(base, method.makeRef()));
-                        insertionPairs.add(new InsertionPair<Unit>(call, unit));
                     }
                 }
             }
@@ -226,13 +189,61 @@ public class AndroidLogger {
             body.validate();
             lock.unlock();
         }
+
+        static int invokeObjectMethods(JInstanceFieldRef fieldRef, 
+            ArrayList<InsertionPair<Unit>> insertionPairs, 
+            HashMap <String, SootMethod> classNamesToGetters, Unit unit) {
+
+            String fullClassName = findClassName(fieldRef);
+            String [] strArray = fullClassName.split("\\.");
+            String className = strArray[strArray.length - 1];
+            String joinedClassName = String.join("", strArray);
+            if (!classNamesToGetters.containsKey(joinedClassName)) {
+                // TODO: Get class here and instrument
+                SootClass currentClass = fieldRef.getField().getDeclaringClass();
+                System.out.println(joinedClassName + " not found in classNamesToWriteGetters");
+                System.out.println("Creating stuff for  " + currentClass.getName());
+                List<SootMethod> methods = currentClass.getMethods();
+                System.out.println("Methods");
+                for (SootMethod m : methods) System.out.println("\t" + m.getName());
+                Iterator<SootField> iter = currentClass.getFields().iterator();
+                System.out.println("Fields");
+                while (iter.hasNext()) {
+                    SootField f = iter.next();
+                    System.out.println("\t" + f.getName()); 
+                }
+                return 1;
+            }
+            SootMethod method = classNamesToGetters.get(joinedClassName);
+            Local base = (Local)(fieldRef).getBase();
+            Unit call = Jimple.v().newInvokeStmt(Jimple.v().newVirtualInvokeExpr(base, method.makeRef()));
+            insertionPairs.add(new InsertionPair<Unit>(call, unit));
+            return 0;
+
+        }
     }
+
+    static void addObjectAccessFields(SootClass currentClass, SootClass counterClass, HashMap <String, ObjectProfilingData> classNamesToObjectData, 
+        HashMap <String, SootMethod> classNamesToReadGetters, HashMap <String, SootMethod> classNamesToWriteGetters) {
+        String [] strArray = currentClass.getName().split("\\.");
+        String className = strArray[strArray.length - 1];
+        String joinedClassName = String.join("", strArray);
+        SootField staticCounter = addStaticCounter(joinedClassName, counterClass);
+        SootField serialField = addClassField("serial", currentClass);
+        SootField readsField = addClassField("reads", currentClass);
+        SootField writesField = addClassField("writes", currentClass);
+        classNamesToObjectData.put(currentClass.getName(), 
+            new ObjectProfilingData(staticCounter, serialField, readsField, writesField));
+        System.out.println("ADding " + joinedClassName);
+        classNamesToReadGetters.put(joinedClassName,
+            createGetter(currentClass, "incReads", readsField, currentClass.getName() + " object reads = "));
+        classNamesToWriteGetters.put(joinedClassName, 
+            createGetter(currentClass, "incWrites", writesField, currentClass.getName() + " object writes = "));
+
+    }
+
     static void addSerialInitialization(JimpleBody body, SootField serialField, SootField staticCounterField, SootClass currentClass) {
         UnitPatchingChain units = body.getUnits();
-        // serial = staticCounter
-
-// TODO: Uncomment to add log
-//        units.addAll(InstrumentUtil.generateLogStmts(body, " counter = ", counterLocal));
         Iterator<Unit> it = units.iterator();
         Value thisRefLocal = null;
         while (it.hasNext()) {
