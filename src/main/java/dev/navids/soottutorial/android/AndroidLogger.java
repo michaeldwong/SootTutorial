@@ -48,19 +48,14 @@ public class AndroidLogger {
         // Find the package name of the APK
         String packageName = AndroidUtil.getPackageName(apkPath);
         SootClass counterClass = createCounterClass(packageName);
-        HashMap <String, SootMethod> classNamesToReadGetters = new HashMap<>();
-        HashMap <String, SootMethod> classNamesToWriteGetters = new HashMap<>();
+        HashMap <String, SootMethod> classNamesToReadIncrementors = new HashMap<>();
+        HashMap <String, SootMethod> classNamesToWriteIncrementors = new HashMap<>();
         HashMap <String, ObjectProfilingData> classNamesToObjectData = new HashMap<>();
-        instrumentClasses(counterClass, classNamesToReadGetters, classNamesToWriteGetters, classNamesToObjectData);
+        instrumentClasses(counterClass, classNamesToReadIncrementors, classNamesToWriteIncrementors, classNamesToObjectData);
         
-//        PackManager.v().getPack("jtp").add(
-//            new Transform("jtp.test", 
-//                new ObjectProfilingInjector(counterClass, classNamesToReadGetters, classNamesToWriteGetters)
-//            )
-//        );
         PackManager.v().getPack("jtp").add(
             new Transform("jtp.recordAccesses", 
-                new ObjectLoggingInjector(counterClass, classNamesToReadGetters, classNamesToWriteGetters)
+                new ObjectLoggingInjector(counterClass, classNamesToReadIncrementors, classNamesToWriteIncrementors)
             )
         );
 
@@ -89,8 +84,8 @@ public class AndroidLogger {
         PackManager.v().writeOutput();
     }
 
-    static void instrumentClasses(SootClass counterClass, HashMap<String,SootMethod> classNamesToReadGetters, 
-               HashMap<String,SootMethod> classNamesToWriteGetters, HashMap <String, ObjectProfilingData> classNamesToObjectData) {
+    static void instrumentClasses(SootClass counterClass, HashMap<String,SootMethod> classNamesToReadIncrementors, 
+               HashMap<String,SootMethod> classNamesToWriteIncrementors, HashMap <String, ObjectProfilingData> classNamesToObjectData) {
         lock.lock();
         Iterator<SootClass> classIt = Scene.v().getApplicationClasses().iterator();
         HashMap<SootMethod, ObjectProfilingData> constructorsToData = new HashMap<>();
@@ -102,7 +97,7 @@ public class AndroidLogger {
             System.out.println("Class : " + currentClass.getName());
             List<SootMethod> methods = currentClass.getMethods();
             addObjectAccessFields(currentClass, counterClass, classNamesToObjectData, 
-                  classNamesToReadGetters, classNamesToWriteGetters);
+                  classNamesToReadIncrementors, classNamesToWriteIncrementors);
 
                 ObjectProfilingData data = classNamesToObjectData.get(currentClass.getName());
             for (SootMethod m : methods) {
@@ -132,65 +127,17 @@ public class AndroidLogger {
         return counterClass;
     }
 
-    // The following functions are for counting reads/writes at 
-    // the level of OBJECTS
-    static class ObjectProfilingInjector extends BodyTransformer {
-    
-        SootClass counterClass;
-        HashMap <String, ObjectProfilingData> classNamesToObjectData;
-        HashMap <String, SootMethod> classNamesToReadGetters;
-        HashMap <String, SootMethod> classNamesToWriteGetters;
-        public ObjectProfilingInjector(SootClass counterClass, 
-               HashMap<String,SootMethod> classNamesToReadGetters, 
-               HashMap<String,SootMethod> classNamesToWriteGetters) {
-            this.counterClass = counterClass;
-            this.classNamesToObjectData = new HashMap<>();
-            this.classNamesToReadGetters = classNamesToReadGetters;
-            this.classNamesToWriteGetters = classNamesToWriteGetters;
-        }
-
-        @Override
-        protected void internalTransform(Body b, String phaseName, Map<String, String> options) {
-            // First we filter out Android framework methods
-            if (AndroidUtil.isAndroidMethod(b.getMethod())) {
-                return;
-            }
-            lock.lock();
-            // For every class, add a new static counter variable
-            // to CounterClass. Then add a new serial field to the
-            // current class along with a getter and incrementer
-            // for it. The new serial field should be set to the
-            // static counter + 1
-            SootClass currentClass = b.getMethod().getDeclaringClass();
-            if (!b.getMethod().isConstructor()) {
-                lock.unlock();
-                return;
-            }
-            if (!this.classNamesToObjectData.containsKey(currentClass.getName())) {
-                addObjectAccessFields(currentClass, this.counterClass, classNamesToObjectData, 
-                      this.classNamesToReadGetters, this.classNamesToWriteGetters);
-            }
-            ObjectProfilingData data = this.classNamesToObjectData.get(currentClass.getName());
-            SootField staticCounter = data.staticCounter;
-            SootField serialField = data.serialField;
-            SootField readsField = data.readsField;
-            SootField writesField = data.writesField;
-            addSerialInitialization((JimpleBody)b, serialField, staticCounter, currentClass);
-            lock.unlock();
-        }
-    }
-
     static class ObjectLoggingInjector extends BodyTransformer {
 
-        HashMap <String, SootMethod> classNamesToReadGetters;
-        HashMap <String, SootMethod> classNamesToWriteGetters;
+        HashMap <String, SootMethod> classNamesToReadIncrementors;
+        HashMap <String, SootMethod> classNamesToWriteIncrementors;
         HashMap <String, ObjectProfilingData> classNamesToObjectData;
         SootClass counterClass;
-        public ObjectLoggingInjector(SootClass counterClass, HashMap<String,SootMethod> classNamesToReadGetters,
-               HashMap<String,SootMethod> classNamesToWriteGetters) {
+        public ObjectLoggingInjector(SootClass counterClass, HashMap<String,SootMethod> classNamesToReadIncrementors,
+               HashMap<String,SootMethod> classNamesToWriteIncrementors) {
             this.counterClass = counterClass;
-            this.classNamesToReadGetters = classNamesToReadGetters;
-            this.classNamesToWriteGetters = classNamesToWriteGetters;
+            this.classNamesToReadIncrementors = classNamesToReadIncrementors;
+            this.classNamesToWriteIncrementors = classNamesToWriteIncrementors;
             this.classNamesToObjectData = new HashMap<>();
         }
 
@@ -215,11 +162,11 @@ public class AndroidLogger {
                     Value rhs = ((JAssignStmt)unit).getRightOp();
                     if (lhs instanceof JInstanceFieldRef) {
                         invokeObjectMethods((JInstanceFieldRef)lhs, 
-                            insertionPairs, classNamesToWriteGetters, unit); 
+                            insertionPairs, classNamesToWriteIncrementors, unit); 
                     }
                     if (rhs instanceof JInstanceFieldRef) {
                         invokeObjectMethods((JInstanceFieldRef)rhs, 
-                            insertionPairs, classNamesToReadGetters, unit);
+                            insertionPairs, classNamesToReadIncrementors, unit);
                     }
                 }
             }
@@ -232,16 +179,16 @@ public class AndroidLogger {
 
         public void invokeObjectMethods(JInstanceFieldRef fieldRef, 
             ArrayList<InsertionPair<Unit>> insertionPairs, 
-            HashMap <String, SootMethod> classNamesToGetters, Unit unit) {
+            HashMap <String, SootMethod> classNamesToIncrementors, Unit unit) {
             String fullClassName = findClassName(fieldRef);
             String [] strArray = fullClassName.split("\\.");
             String className = strArray[strArray.length - 1];
             String joinedClassName = String.join("", strArray);
             SootClass currentClass = fieldRef.getField().getDeclaringClass();
-            if (!classNamesToGetters.containsKey(joinedClassName) || currentClass.isInterface()) {
+            if (!classNamesToIncrementors.containsKey(joinedClassName) || currentClass.isInterface()) {
                 return;
             }
-            SootMethod method = classNamesToGetters.get(joinedClassName);
+            SootMethod method = classNamesToIncrementors.get(joinedClassName);
             System.out.println(currentClass.getName() + " has method " + method.getName() + " ? ");
             System.out.println(currentClass.declaresMethodByName(method.getName()));
             System.out.println("Makign call to " + method.getName());
@@ -259,7 +206,7 @@ public class AndroidLogger {
     }
 
     static void addObjectAccessFields(SootClass currentClass, SootClass counterClass, HashMap <String, ObjectProfilingData> classNamesToObjectData, 
-        HashMap <String, SootMethod> classNamesToReadGetters, HashMap <String, SootMethod> classNamesToWriteGetters) {
+        HashMap <String, SootMethod> classNamesToReadIncrementors, HashMap <String, SootMethod> classNamesToWriteIncrementors) {
         String [] strArray = currentClass.getName().split("\\.");
         String className = strArray[strArray.length - 1];
         String joinedClassName = String.join("", strArray);
@@ -270,10 +217,10 @@ public class AndroidLogger {
         classNamesToObjectData.put(currentClass.getName(), 
             new ObjectProfilingData(staticCounter, serialField, readsField, writesField));
 
-        classNamesToReadGetters.put(joinedClassName,
-            createGetter(currentClass, "incReads", readsField, currentClass.getName() + " object reads = "));
-        classNamesToWriteGetters.put(joinedClassName, 
-            createGetter(currentClass, "incWrites", writesField, currentClass.getName() + " object writes = "));
+        classNamesToReadIncrementors.put(joinedClassName,
+            createIncrementor(currentClass, "incReads", readsField, currentClass.getName() + " object reads = "));
+        classNamesToWriteIncrementors.put(joinedClassName, 
+            createIncrementor(currentClass, "incWrites", writesField, currentClass.getName() + " object writes = "));
 
     }
 
@@ -311,7 +258,7 @@ public class AndroidLogger {
         body.validate(); 
     }
 
-    static SootMethod createGetter(SootClass currentClass, String name, SootField currentField, String logMessage) {
+    static SootMethod createIncrementor(SootClass currentClass, String name, SootField currentField, String logMessage) {
         String methodName = name;
         if (currentClass.declaresMethodByName(methodName)) {
             return currentClass.getMethodByName(methodName);
