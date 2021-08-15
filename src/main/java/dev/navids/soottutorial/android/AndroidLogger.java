@@ -206,9 +206,7 @@ public class AndroidLogger {
             arrayClass.addMethod(constructor);
             JimpleBody body = Jimple.v().newBody(constructor);
             UnitPatchingChain units = body.getUnits();
-
             Value thisRef = Jimple.v().newThisRef(arrayClass.getType());
-
             Local thisLocal = InstrumentUtil.generateNewLocal(body, arrayClass.getType());
             units.add(Jimple.v().newIdentityStmt(thisLocal, thisRef));
             Local paramLocal = InstrumentUtil.generateNewLocal(body, arrayType);
@@ -225,17 +223,49 @@ public class AndroidLogger {
             units.add(Jimple.v().newAssignStmt(Jimple.v().newStaticFieldRef(counterField.makeRef()), counterLocal));
 
             units.addAll(InstrumentUtil.generateLogStmts(body, arrayClass.getName() + " intiailized id = ", counterLocal));
-
-
             Unit returnUnit = Jimple.v().newReturnVoidStmt();
             units.add(returnUnit);
 
             System.out.println("NEW CONSTRUCTOR:\n" + body.toString());
             body.validate();
             constructor.setActiveBody(body);
-
-
             return constructor;
+        }
+
+        public void createArrayAccessMethods(SootClass arrayClass, String arrayClassName, ArrayType arrayType) {
+            Type elementType = arrayType.getElementType();
+            String methodName = "get";
+            SootMethod getter = new SootMethod(methodName,
+                Arrays.asList(new Type[]{IntType.v()}),
+                elementType, Modifier.PUBLIC);
+            arrayClass.addMethod(getter);
+            JimpleBody body = Jimple.v().newBody(getter);
+            UnitPatchingChain units = body.getUnits();
+
+            Value thisRef = Jimple.v().newThisRef(arrayClass.getType());
+            Local thisLocal = InstrumentUtil.generateNewLocal(body, arrayClass.getType());
+            units.add(Jimple.v().newIdentityStmt(thisLocal, thisRef));
+            Local indexLocal = InstrumentUtil.generateNewLocal(body, IntType.v());
+            ParameterRef indexParam = Jimple.v().newParameterRef(IntType.v(), 0);
+            units.add(Jimple.v().newIdentityStmt(indexLocal, indexParam));
+
+
+            Local arrayLocal = InstrumentUtil.generateNewLocal(body, arrayType);
+
+            InstanceFieldRef serialFieldRef = Jimple.v().newInstanceFieldRef(thisLocal, arrayClass.getFieldByName("array").makeRef());
+
+
+
+            units.add(Jimple.v().newAssignStmt(arrayLocal, serialFieldRef));
+
+            Local valueLocal = InstrumentUtil.generateNewLocal(body, elementType);
+            units.add(Jimple.v().newAssignStmt(valueLocal, Jimple.v().newArrayRef(arrayLocal, indexLocal)));
+            Unit returnUnit = Jimple.v().newReturnStmt(valueLocal);
+            units.add(returnUnit);
+            System.out.println("NEW GETTER:\n" + body.toString());
+            body.validate();
+            getter.setActiveBody(body);
+           
         }
 
         public SootClass createArrayClass(JNewArrayExpr arrayExpr, List<InsertionPair<Unit>> insertionPairs) {
@@ -262,8 +292,11 @@ public class AndroidLogger {
             SootField array = new SootField("array", arrayType);
             arrayClass.addField(array);
             System.out.println("Created class " + signature);
+            System.out.println("Array type = " + arrayType.toString() + ", element type = " + ((ArrayType)arrayType).getElementType().toString());
             ObjectProfilingData data = classNamesToObjectData.get(arrayClass.getName());
             SootMethod constructor = createArrayConstructor(arrayClass, arrayClassName, arrayType, data.staticCounter); 
+
+            createArrayAccessMethods(arrayClass, arrayClassName, (ArrayType)arrayType);
             this.arrayClasses.put(arrayClassName, arrayClass);
             return arrayClass; 
         }
