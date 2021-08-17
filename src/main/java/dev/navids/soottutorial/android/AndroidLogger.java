@@ -52,7 +52,6 @@ public class AndroidLogger {
         HashMap <String, SootMethod> classNamesToWriteIncrementors = new HashMap<>();
         HashMap <String, ObjectProfilingData> classNamesToObjectData = new HashMap<>();
         instrumentClasses(counterClass, classNamesToReadIncrementors, classNamesToWriteIncrementors, classNamesToObjectData);
-        
         PackManager.v().getPack("jtp").add(
             new Transform("jtp.recordAccesses", 
                 new ObjectLoggingInjector(counterClass, classNamesToReadIncrementors, classNamesToWriteIncrementors, packageName)
@@ -97,8 +96,14 @@ public class AndroidLogger {
     static void instrumentClasses(SootClass counterClass, HashMap<String,SootMethod> classNamesToReadIncrementors, 
                HashMap<String,SootMethod> classNamesToWriteIncrementors, HashMap <String, ObjectProfilingData> classNamesToObjectData) {
         lock.lock();
-        Iterator<SootClass> classIt = Scene.v().getApplicationClasses().iterator();
+
         HashMap<SootMethod, ObjectProfilingData> constructorsToData = new HashMap<>();
+        Iterator<SootClass>libIt = Scene.v().getLibraryClasses().iterator();
+        while (libIt.hasNext()) {
+            SootClass currentClass = libIt.next();
+            System.out.println("Library class : " + currentClass.getName());
+        }
+        Iterator<SootClass> classIt = Scene.v().getApplicationClasses().iterator();
         while (classIt.hasNext()) {
             SootClass currentClass = classIt.next();
             if (currentClass.getName().equals(counterClass.getName()) || currentClass.isInterface()) {
@@ -106,7 +111,7 @@ public class AndroidLogger {
             }
             System.out.println("Class : " + currentClass.getName());
             List<SootMethod> methods = currentClass.getMethods();
-            addObjectAccessFields(currentClass, counterClass, classNamesToObjectData, 
+            ClassInstrumentationUtil.addObjectAccessFields(currentClass, counterClass, classNamesToObjectData, 
                   classNamesToReadIncrementors, classNamesToWriteIncrementors);
                 ObjectProfilingData data = classNamesToObjectData.get(currentClass.getName());
             for (SootMethod m : methods) {
@@ -141,17 +146,17 @@ public class AndroidLogger {
         HashMap <String, SootMethod> classNamesToReadIncrementors;
         HashMap <String, SootMethod> classNamesToWriteIncrementors;
         HashMap <String, ObjectProfilingData> classNamesToObjectData;
-        HashMap <String, SootClass> arrayClasses;
         SootClass counterClass;
         String packageName;
+        ArrayWrapperCreator arrayWrapperCreator;
         public ObjectLoggingInjector(SootClass counterClass, HashMap<String,SootMethod> classNamesToReadIncrementors,
                HashMap<String,SootMethod> classNamesToWriteIncrementors, String packageName) {
             this.counterClass = counterClass;
             this.classNamesToReadIncrementors = classNamesToReadIncrementors;
             this.classNamesToWriteIncrementors = classNamesToWriteIncrementors;
             this.classNamesToObjectData = new HashMap<>();
-            this.arrayClasses = new HashMap<>();
             this.packageName = packageName;
+            this.arrayWrapperCreator = new ArrayWrapperCreator(counterClass, packageName);
         }
 
         @Override
@@ -167,7 +172,8 @@ public class AndroidLogger {
             JimpleBody body = (JimpleBody) b;
             UnitPatchingChain units = body.getUnits();
             Iterator<Unit> it = units.iterator();
-            ArrayList<InsertionPair<Unit>> insertionPairs = new ArrayList<InsertionPair<Unit>>();
+            ArrayList<InsertionPair<Unit>> beforePairs = new ArrayList<InsertionPair<Unit>>();
+            ArrayList<InsertionPair<Unit>> afterPairs = new ArrayList<InsertionPair<Unit>>();
             while (it.hasNext()) {
                 Unit unit = it.next();
                 if (unit instanceof JAssignStmt) {
@@ -175,172 +181,31 @@ public class AndroidLogger {
                     Value rhs = ((JAssignStmt)unit).getRightOp();
                     if (lhs instanceof JInstanceFieldRef) {
                         invokeObjectMethods((JInstanceFieldRef)lhs, 
-                            insertionPairs, classNamesToWriteIncrementors, unit); 
+                            beforePairs, classNamesToWriteIncrementors, unit); 
                     }
                     else if (lhs instanceof JNewArrayExpr) {
-                        createArrayClass((JNewArrayExpr)lhs, insertionPairs);
+                        this.arrayWrapperCreator.createArrayClass((JNewArrayExpr)lhs);
                     }
 
                     if (rhs instanceof JInstanceFieldRef) {
                         invokeObjectMethods((JInstanceFieldRef)rhs, 
-                            insertionPairs, classNamesToReadIncrementors, unit);
+                            beforePairs, classNamesToReadIncrementors, unit);
                     }
                     else if (rhs instanceof JNewArrayExpr) {
-                        createArrayClass((JNewArrayExpr)rhs, insertionPairs);
+                        this.arrayWrapperCreator.createArrayClass((JNewArrayExpr)rhs);
                     }
                 }
             }
-            for (InsertionPair<Unit> pair : insertionPairs) {
+            for (InsertionPair<Unit> pair : beforePairs) {
                 units.insertBefore(pair.toInsert, pair.point);
             }
             body.validate();
             lock.unlock();
         }
 
-        public SootMethod createArrayConstructor(SootClass arrayClass, String arrayClassName, Type arrayType, SootField counterField) {
-
-            String methodName = "<init>";
-            SootMethod constructor = new SootMethod(methodName,
-                Arrays.asList(new Type[]{arrayType}),
-                VoidType.v(), Modifier.PUBLIC);
-            arrayClass.addMethod(constructor);
-            JimpleBody body = Jimple.v().newBody(constructor);
-            UnitPatchingChain units = body.getUnits();
-            Value thisRef = Jimple.v().newThisRef(arrayClass.getType());
-            Local thisLocal = InstrumentUtil.generateNewLocal(body, arrayClass.getType());
-            units.add(Jimple.v().newIdentityStmt(thisLocal, thisRef));
-            Local paramLocal = InstrumentUtil.generateNewLocal(body, arrayType);
-            ParameterRef arrayParam = Jimple.v().newParameterRef(arrayType, 0);
-            units.add(Jimple.v().newIdentityStmt(paramLocal, arrayParam));
-            InstanceFieldRef arrayFieldRef = Jimple.v().newInstanceFieldRef(thisLocal, 
-                arrayClass.getFieldByName("array").makeRef());
-            units.add(Jimple.v().newAssignStmt(arrayFieldRef, paramLocal));
-
-            Local counterLocal = InstrumentUtil.generateNewLocal(body, IntType.v());
-            units.add(Jimple.v().newAssignStmt(counterLocal, Jimple.v().newStaticFieldRef(counterField.makeRef())));
-            units.add(Jimple.v().newAssignStmt(counterLocal, 
-                    Jimple.v().newAddExpr(counterLocal, IntConstant.v(1))));
-            units.add(Jimple.v().newAssignStmt(Jimple.v().newStaticFieldRef(counterField.makeRef()), counterLocal));
-
-            units.addAll(InstrumentUtil.generateLogStmts(body, arrayClass.getName() + " intiailized id = ", counterLocal));
-            Unit returnUnit = Jimple.v().newReturnVoidStmt();
-            units.add(returnUnit);
-
-            System.out.println("NEW CONSTRUCTOR:\n" + body.toString());
-            body.validate();
-            constructor.setActiveBody(body);
-            return constructor;
-        }
-
-        public void createArrayGetter(SootClass arrayClass, String arrayClassName, ArrayType arrayType, SootMethod incReads) {
-            Type elementType = arrayType.getElementType();
-            String methodName = "get";
-            SootMethod getter = new SootMethod(methodName,
-                Arrays.asList(new Type[]{IntType.v()}),
-                elementType, Modifier.PUBLIC);
-            arrayClass.addMethod(getter);
-            JimpleBody body = Jimple.v().newBody(getter);
-            UnitPatchingChain units = body.getUnits();
-            Value thisRef = Jimple.v().newThisRef(arrayClass.getType());
-            Local thisLocal = InstrumentUtil.generateNewLocal(body, arrayClass.getType());
-            units.add(Jimple.v().newIdentityStmt(thisLocal, thisRef));
-            Local indexLocal = InstrumentUtil.generateNewLocal(body, IntType.v());
-            ParameterRef indexParam = Jimple.v().newParameterRef(IntType.v(), 0);
-            units.add(Jimple.v().newIdentityStmt(indexLocal, indexParam));
-            Local arrayLocal = InstrumentUtil.generateNewLocal(body, arrayType);
-            InstanceFieldRef serialFieldRef = Jimple.v().newInstanceFieldRef(thisLocal, arrayClass.getFieldByName("array").makeRef());
-            units.add(Jimple.v().newAssignStmt(arrayLocal, serialFieldRef));
-            Local valueLocal = InstrumentUtil.generateNewLocal(body, elementType);
-            units.add(Jimple.v().newAssignStmt(valueLocal, Jimple.v().newArrayRef(arrayLocal, indexLocal)));
-            Unit call = Jimple.v().newInvokeStmt(Jimple.v().newVirtualInvokeExpr(thisLocal, incReads.makeRef()));
-            units.add(call);
-            Unit returnUnit = Jimple.v().newReturnStmt(valueLocal);
-            units.add(returnUnit);
-            System.out.println("NEW GETTER:\n" + body.toString());
-            body.validate();
-            getter.setActiveBody(body);
-        }
-        public void createArraySetter(SootClass arrayClass, String arrayClassName, ArrayType arrayType, SootMethod incWrites) {
-            Type elementType = arrayType.getElementType();
-            String methodName = "set";
-            SootMethod setter = new SootMethod(methodName,
-                Arrays.asList(new Type[]{IntType.v(), elementType}),
-                VoidType.v(), Modifier.PUBLIC);
-            arrayClass.addMethod(setter);
-            JimpleBody body = Jimple.v().newBody(setter);
-            UnitPatchingChain units = body.getUnits();
-            Value thisRef = Jimple.v().newThisRef(arrayClass.getType());
-            Local thisLocal = InstrumentUtil.generateNewLocal(body, arrayClass.getType());
-            units.add(Jimple.v().newIdentityStmt(thisLocal, thisRef));
-            Local indexLocal = InstrumentUtil.generateNewLocal(body, IntType.v());
-            ParameterRef indexParam = Jimple.v().newParameterRef(IntType.v(), 0);
-            units.add(Jimple.v().newIdentityStmt(indexLocal, indexParam));
-            Local valueLocal = InstrumentUtil.generateNewLocal(body, elementType);
-            ParameterRef valueParam = Jimple.v().newParameterRef(elementType, 1);
-            units.add(Jimple.v().newIdentityStmt(valueLocal, valueParam));
-
-
-
-            Local arrayLocal = InstrumentUtil.generateNewLocal(body, arrayType);
-            InstanceFieldRef serialFieldRef = Jimple.v().newInstanceFieldRef(thisLocal, 
-                arrayClass.getFieldByName("array").makeRef());
-            units.add(Jimple.v().newAssignStmt(arrayLocal, serialFieldRef));
-            units.add(Jimple.v().newAssignStmt(Jimple.v().newArrayRef(arrayLocal, indexLocal), valueLocal));
-            Unit call = Jimple.v().newInvokeStmt(Jimple.v().newVirtualInvokeExpr(thisLocal, incWrites.makeRef()));
-            units.add(call);
-            Unit returnUnit = Jimple.v().newReturnVoidStmt();
-            units.add(returnUnit);
-            System.out.println("NEW SETTER:\n" + body.toString());
-            body.validate();
-            setter.setActiveBody(body);
-        }
-
-        public void createArrayAccessMethods(SootClass arrayClass, String arrayClassName, 
-                    ArrayType arrayType, SootMethod incReads, SootMethod incWrites) {
-            createArrayGetter(arrayClass, arrayClassName, arrayType, incReads); 
-            createArraySetter(arrayClass, arrayClassName, arrayType, incWrites);  
-        }
-
-        public SootClass createArrayClass(JNewArrayExpr arrayExpr, List<InsertionPair<Unit>> insertionPairs) {
-            Type arrayType = arrayExpr.getType();
-            String arrayClassName = arrayType
-                .toString()
-                .replace(".", "")
-                .replace("[", "")
-                .replace("]", "") + "Array";
-
-            if (this.arrayClasses.containsKey(arrayClassName)) {
-                return null;
-            }
-            String signature = this.packageName + "." + arrayClassName;
-            SootClass arrayClass = new SootClass(signature, Modifier.PUBLIC);
-            arrayClass.setSuperclass(Scene.v().getSootClass("java.lang.Object")); 
-            arrayClass.setApplicationClass();
-
-            HashMap <String, ObjectProfilingData> classNamesToObjectData = new HashMap<>();
-            HashMap <String, SootMethod> classNamesToReadIncrementors = new HashMap<>();
-            HashMap <String, SootMethod> classNamesToWriteIncrementors = new HashMap<>();
-            addObjectAccessFields(arrayClass, this.counterClass, classNamesToObjectData, 
-                  classNamesToReadIncrementors, classNamesToWriteIncrementors);
-            SootField array = new SootField("array", arrayType);
-            arrayClass.addField(array);
-            System.out.println("Created class " + signature);
-            System.out.println("Array type = " + arrayType.toString() + ", element type = " + ((ArrayType)arrayType).getElementType().toString());
-            ObjectProfilingData data = classNamesToObjectData.get(arrayClass.getName());
-            SootMethod constructor = createArrayConstructor(arrayClass, arrayClassName, arrayType, data.staticCounter); 
-
-            String [] strArray = arrayClass.getName().split("\\.");
-            String className = strArray[strArray.length - 1];
-            String joinedClassName = String.join("", strArray);
-            SootMethod incReads = classNamesToReadIncrementors.get(joinedClassName);
-            SootMethod incWrites = classNamesToWriteIncrementors.get(joinedClassName);
-            createArrayAccessMethods(arrayClass, arrayClassName, (ArrayType)arrayType, incReads, incWrites);
-            this.arrayClasses.put(arrayClassName, arrayClass);
-            return arrayClass; 
-        }
 
         public void invokeObjectMethods(JInstanceFieldRef fieldRef, 
-            ArrayList<InsertionPair<Unit>> insertionPairs, 
+            ArrayList<InsertionPair<Unit>> beforePairs, 
             HashMap <String, SootMethod> classNamesToIncrementors, Unit unit) {
             String fullClassName = findClassName(fieldRef);
             String [] strArray = fullClassName.split("\\.");
@@ -364,28 +229,10 @@ public class AndroidLogger {
             else {
                 call = Jimple.v().newInvokeStmt(Jimple.v().newVirtualInvokeExpr(base, method.makeRef()));
             }
-            insertionPairs.add(new InsertionPair<Unit>(call, unit));
+            beforePairs.add(new InsertionPair<Unit>(call, unit));
         }
     }
 
-    static void addObjectAccessFields(SootClass currentClass, SootClass counterClass, HashMap <String, ObjectProfilingData> classNamesToObjectData, 
-        HashMap <String, SootMethod> classNamesToReadIncrementors, HashMap <String, SootMethod> classNamesToWriteIncrementors) {
-        String [] strArray = currentClass.getName().split("\\.");
-        String className = strArray[strArray.length - 1];
-        String joinedClassName = String.join("", strArray);
-        SootField staticCounter = addStaticCounter(joinedClassName, counterClass);
-        SootField serialField = addClassField("serial", currentClass);
-        SootField readsField = addClassField("reads", currentClass);
-        SootField writesField = addClassField("writes", currentClass);
-        classNamesToObjectData.put(currentClass.getName(), 
-            new ObjectProfilingData(staticCounter, serialField, readsField, writesField));
-
-        classNamesToReadIncrementors.put(joinedClassName,
-            createIncrementor(currentClass, "incReads", readsField, currentClass.getName() + " object reads = "));
-        classNamesToWriteIncrementors.put(joinedClassName, 
-            createIncrementor(currentClass, "incWrites", writesField, currentClass.getName() + " object writes = "));
-
-    }
 
     static void addSerialInitialization(JimpleBody body, SootField serialField, SootField staticCounterField, SootClass currentClass) {
         UnitPatchingChain units = body.getUnits();
@@ -421,45 +268,6 @@ public class AndroidLogger {
         body.validate(); 
     }
 
-    static SootMethod createIncrementor(SootClass currentClass, String name, SootField currentField, String logMessage) {
-        String methodName = name;
-        if (currentClass.declaresMethodByName(methodName)) {
-            return currentClass.getMethodByName(methodName);
-        }
-        SootMethod getter = new SootMethod(methodName,
-            Arrays.asList(new Type[]{}),
-            VoidType.v(), Modifier.PUBLIC);
-        currentClass.addMethod(getter);
-        JimpleBody body = Jimple.v().newBody(getter);
-        UnitPatchingChain units = body.getUnits();
-
-        ThisRef thisRef = Jimple.v().newThisRef(currentClass.getType());
-        Local base = InstrumentUtil.generateNewLocal(body, currentClass.getType());
-        IdentityStmt idStmt = Jimple.v().newIdentityStmt(base, thisRef);
-        units.add(idStmt);
-        InstanceFieldRef instanceFieldRef = Jimple.v().newInstanceFieldRef(base, currentField.makeRef());
-        Local counterLocal = InstrumentUtil.generateNewLocal(body, IntType.v());
-        units.add(Jimple.v().newAssignStmt(counterLocal, instanceFieldRef));
-        units.add(Jimple.v().newAssignStmt(counterLocal, 
-                Jimple.v().newAddExpr(counterLocal, IntConstant.v(1))));
-
-        InstanceFieldRef instanceFieldRef2 = Jimple.v().newInstanceFieldRef(base, currentField.makeRef());
-        units.add(Jimple.v().newAssignStmt(instanceFieldRef2, counterLocal));
-
-        // Get serial value for log
-        SootField serialField = currentClass.getFieldByName("serial");
-        InstanceFieldRef serialFieldRef = Jimple.v().newInstanceFieldRef(base, serialField.makeRef());
-        Local serialLocal = InstrumentUtil.generateNewLocal(body, IntType.v());
-        units.add(Jimple.v().newAssignStmt(serialLocal, serialFieldRef));
-        units.addAll(InstrumentUtil.generateLogStmts(body, currentClass.getName() + " serial id = ", serialLocal));
-
-        // Log for reads/writes count
-        units.addAll(InstrumentUtil.generateLogStmts(body, logMessage, counterLocal));
-        units.add(Jimple.v().newReturnVoidStmt());
-        body.validate();
-        getter.setActiveBody(body);
-        return getter;
-    }
 
    /* ****************************************************
      The following functions are for counting reads/writes at 
@@ -557,7 +365,9 @@ public class AndroidLogger {
                 .getType()
                 .toString()
                 .replace("[]", "Array");
-        generateMethods(fullClassName, counterClass, classToReadMethods, classToWriteMethods);
+        ClassInstrumentationUtil.createCounterMethods(fullClassName, 
+            counterClass, classToReadMethods, classToWriteMethods,
+            generatedFunctionNames);
         insertionPairs.add(
             generateInsertionPair(fullClassName, classToWriteMethods, unit)
         );
@@ -567,7 +377,8 @@ public class AndroidLogger {
                 .toString()
                 .replace("[]", "");
         if (isPrimitive(typeName)) {
-            generateMethods(typeName, counterClass, classToReadMethods, classToWriteMethods);
+            ClassInstrumentationUtil.createCounterMethods(typeName, 
+                counterClass, classToReadMethods, classToWriteMethods, generatedFunctionNames);
             insertionPairs.add(
                 generateInsertionPair(typeName, classToWriteMethods, unit)
             );
@@ -583,7 +394,8 @@ public class AndroidLogger {
                 .getType()
                 .toString()
                 .replace("[]", "Array");
-        generateMethods(fullClassName, counterClass, classToReadMethods, classToWriteMethods);
+        ClassInstrumentationUtil.createCounterMethods(fullClassName,
+            counterClass, classToReadMethods, classToWriteMethods, generatedFunctionNames);
         insertionPairs.add(
             generateInsertionPair(fullClassName, classToReadMethods, unit)
         );
@@ -593,7 +405,8 @@ public class AndroidLogger {
                 .toString()
                 .replace("[]", "");
         if (isPrimitive(typeName)) {
-            generateMethods(typeName, counterClass, classToReadMethods, classToWriteMethods);
+            ClassInstrumentationUtil.createCounterMethods(typeName, 
+                counterClass, classToReadMethods, classToWriteMethods, generatedFunctionNames);
             insertionPairs.add(
                 generateInsertionPair(typeName, classToReadMethods, unit)
             );
@@ -606,13 +419,15 @@ public class AndroidLogger {
                     HashMap<String,SootMethod> classToWriteMethods,
                     ArrayList<InsertionPair<Unit>> insertionPairs) {
         String fullClassName = findClassName((JInstanceFieldRef)lhs);
-        generateMethods(fullClassName, counterClass, classToReadMethods, classToWriteMethods);
+        ClassInstrumentationUtil.createCounterMethods(fullClassName,
+            counterClass, classToReadMethods, classToWriteMethods, generatedFunctionNames);
         insertionPairs.add(
             generateInsertionPair(fullClassName, classToWriteMethods, unit)
         );
         String typeName = findTypeName((JInstanceFieldRef)lhs);
         if (isPrimitive(typeName)) {
-            generateMethods(typeName, counterClass, classToReadMethods, classToWriteMethods);
+            ClassInstrumentationUtil.createCounterMethods(typeName, 
+                counterClass, classToReadMethods, classToWriteMethods, generatedFunctionNames);
             insertionPairs.add(
                 generateInsertionPair(typeName, classToWriteMethods, unit)
             );
@@ -626,30 +441,21 @@ public class AndroidLogger {
                     ArrayList<InsertionPair<Unit>> insertionPairs) {
 
         String fullClassName = findClassName((JInstanceFieldRef)rhs);
-        generateMethods(fullClassName, counterClass, classToReadMethods, classToWriteMethods);
+        ClassInstrumentationUtil.createCounterMethods(fullClassName,
+            counterClass, classToReadMethods, classToWriteMethods, generatedFunctionNames);
         insertionPairs.add(
             generateInsertionPair(fullClassName, classToReadMethods, unit)
         );
         String typeName = findTypeName((JInstanceFieldRef)rhs);
         if (isPrimitive(typeName)) {
-            generateMethods(typeName, counterClass, classToReadMethods, classToWriteMethods);
+            ClassInstrumentationUtil.createCounterMethods(typeName, 
+                counterClass, classToReadMethods, classToWriteMethods, generatedFunctionNames);
             insertionPairs.add(
                 generateInsertionPair(typeName, classToReadMethods, unit)
             );
         }
 
     }
-    static void generateMethods(String fullClassName, SootClass counterClass, 
-                    HashMap<String,SootMethod> classToReadMethods, 
-                    HashMap<String,SootMethod> classToWriteMethods) {
-        if (!classToReadMethods.containsKey(fullClassName)) {
-            SootMethod incReadMethod = generateReadCounter(fullClassName, counterClass);
-            SootMethod incWriteMethod = generateWriteCounter(fullClassName, counterClass);
-            classToReadMethods.put(fullClassName, incReadMethod);
-            classToWriteMethods.put(fullClassName, incWriteMethod);
-        }
-    }
-
     static InsertionPair generateInsertionPair(String fullClassName, HashMap<String, SootMethod> classToMethods, Unit unit) {
         SootMethod method = classToMethods.get(fullClassName);
         Unit call = Jimple.v().newInvokeStmt(Jimple.v().newStaticInvokeExpr(method.makeRef()));
@@ -657,78 +463,7 @@ public class AndroidLogger {
         return pair;
     }
 
-    static SootMethod generateReadCounter(String fullClassName, SootClass counterClass) {
-        String [] strArray = fullClassName.split("\\.");
-        String typeName = strArray[strArray.length - 1];
-        String joinedName = String.join("", strArray);
-        SootField readCounter = addStaticCounter(joinedName + "Read", counterClass);
-        SootMethod readIncMethod = createMethod(counterClass,  
-            joinedName + "Read", fullClassName + " read", readCounter);
-        return readIncMethod;
-    }
-
-    static SootMethod generateWriteCounter(String fullClassName, SootClass counterClass) {
-        String [] strArray = fullClassName.split("\\.");
-        String typeName = strArray[strArray.length - 1];
-        String joinedName = String.join("", strArray);
-        SootField writeCounter = addStaticCounter(joinedName + "Write", counterClass);
-        SootMethod writeIncMethod = createMethod(counterClass, 
-            joinedName + "Write", fullClassName + " write", writeCounter);
-        return writeIncMethod;
-    }
-    static SootMethod generateFunctionCounter(String fullFunctionName, SootClass counterClass) {
-        String [] strArray = fullFunctionName.split("\\.");
-        String functionName = strArray[strArray.length - 1];
-        String joinedName = String.join("", strArray);
-        SootField functionCounter = addStaticCounter(joinedName + "Call", counterClass);
-        SootMethod functionIncMethod = createMethod(counterClass, 
-            joinedName + "Call", fullFunctionName + " function call", functionCounter);
-        return functionIncMethod;
-    }
-
-    // Create new counter for every new object type encountered
-    static SootField addStaticCounter(String name, SootClass counterClass) {
-        if (!counterClass.declaresFieldByName(name + "Counter")) {
-            SootField counterField = new SootField(name + "Counter", 
-                IntType.v(), Modifier.PUBLIC | Modifier.STATIC);
-            counterClass.addField(counterField);
-            return counterField;
-        }
-        return counterClass.getFieldByName(name + "Counter");
-    }
-    
-    // Field to denote unique id for an object
-    static SootField addClassField(String name, SootClass currentClass) {
-        if (!currentClass.declaresFieldByName(name)) {
-            SootField serialField = new SootField(name,
-                IntType.v());
-            currentClass.addField(serialField);
-            return serialField;
-        }
-        return currentClass.getFieldByName(name);
-    }
-
-    static SootMethod createMethod(SootClass counterClass, String name, String nameForLog, SootField counterField) {
-        String methodName = "increment" + name;
-        SootMethod incMethod = new SootMethod(methodName,
-            Arrays.asList(new Type[]{}),
-            VoidType.v(), Modifier.PUBLIC | Modifier.STATIC);
-        generatedFunctionNames.add(methodName);
-        counterClass.addMethod(incMethod);
-        JimpleBody body = Jimple.v().newBody(incMethod);
-        UnitPatchingChain units = body.getUnits();
-        Local counterLocal = InstrumentUtil.generateNewLocal(body, IntType.v());
-        units.add(Jimple.v().newAssignStmt(counterLocal, Jimple.v().newStaticFieldRef(counterField.makeRef())));
-        units.add(Jimple.v().newAssignStmt(counterLocal, 
-                Jimple.v().newAddExpr(counterLocal, IntConstant.v(1))));
-        units.add(Jimple.v().newAssignStmt(Jimple.v().newStaticFieldRef(counterField.makeRef()), counterLocal));
-        units.addAll(InstrumentUtil.generateLogStmts(body, nameForLog + " counter = ", counterLocal));
-        Unit returnUnit = Jimple.v().newReturnVoidStmt();
-        units.add(returnUnit);
-        body.validate();
-        incMethod.setActiveBody(body);
-        return incMethod;
-    }
+   
 
     static String findFullMethodName(SootMethod method) {
         String name = method.getName();
@@ -760,7 +495,8 @@ public class AndroidLogger {
                 return;
             }
             this.counterMethodNames.add(fullMethodString);
-            SootMethod counterMethod = generateFunctionCounter(fullMethodString, this.counterClass);
+            SootMethod counterMethod = ClassInstrumentationUtil
+                .generateFunctionCounter(fullMethodString, this.counterClass, generatedFunctionNames);
             Unit call = Jimple.v().newInvokeStmt(Jimple.v().newStaticInvokeExpr(counterMethod.makeRef()));
             // Insert the generated statement before the first  non-identity stmt
             units.insertBefore(call, body.getFirstNonIdentityStmt());
