@@ -47,6 +47,8 @@ public class ArrayWrapperCreator {
         units.add(Jimple.v().newAssignStmt(Jimple.v().newStaticFieldRef(counterField.makeRef()), counterLocal));
 
         units.addAll(InstrumentUtil.generateLogStmts(body, arrayClass.getName() + " intiailized id = ", counterLocal));
+
+        units.add(Jimple.v().newInvokeStmt(Jimple.v().newSpecialInvokeExpr(thisLocal, arrayClass.getSuperclass().getMethodByName("<init>").makeRef())));
         Unit returnUnit = Jimple.v().newReturnVoidStmt();
         units.add(returnUnit);
 
@@ -128,7 +130,7 @@ public class ArrayWrapperCreator {
             .toString()
             .replace(".", "")
             .replace("[", "")
-            .replace("]", "") + "Array";
+            .replace("]", "Array");
 
         if (this.arrayClasses.containsKey(arrayClassName)) {
             return this.arrayClasses.get(arrayClassName);
@@ -159,6 +161,4 @@ public class ArrayWrapperCreator {
         this.arrayClasses.put(arrayClassName, arrayClass);
         return arrayClass; 
     }
-
-
 }

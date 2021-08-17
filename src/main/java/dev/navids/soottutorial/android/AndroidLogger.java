@@ -192,13 +192,27 @@ public class AndroidLogger {
                             beforePairs, classNamesToReadIncrementors, unit);
                     }
                     else if (rhs instanceof JNewArrayExpr) {
-                        this.arrayWrapperCreator.createArrayClass((JNewArrayExpr)rhs);
+                        SootClass wrapper = this.arrayWrapperCreator.createArrayClass((JNewArrayExpr)rhs);
+                        NewExpr newExpr = Jimple.v().newNewExpr(wrapper.getType());
+                        Local wrapperLocal = InstrumentUtil.generateNewLocal(body, wrapper.getType());
+                        Unit wrapperAssign = Jimple.v().newAssignStmt(wrapperLocal, newExpr);
+                        InsertionPair<Unit>pair = new InsertionPair<Unit>(wrapperAssign, unit);
+                        afterPairs.add(pair);
+                        // TODO: Need to iterate through methods to get constructor
+                        Unit call = Jimple.v().newInvokeStmt((Jimple.v().newSpecialInvokeExpr(wrapperLocal, 
+                            wrapper.getMethodByName("<init>").makeRef(), lhs)));
+                        afterPairs.add(new InsertionPair<Unit>(call, wrapperAssign));
                     }
                 }
             }
             for (InsertionPair<Unit> pair : beforePairs) {
                 units.insertBefore(pair.toInsert, pair.point);
             }
+            for (InsertionPair<Unit> pair : afterPairs) {
+                units.insertAfter(pair.toInsert, pair.point);
+            }
+            System.out.println("Current class: " + b.getMethod().getDeclaringClass().getName());
+            System.out.println("Validating:\n" + body.toString());
             body.validate();
             lock.unlock();
         }
