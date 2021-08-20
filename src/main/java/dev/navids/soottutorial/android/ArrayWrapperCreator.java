@@ -124,13 +124,16 @@ public class ArrayWrapperCreator {
         createArraySetter(arrayClass, arrayClassName, arrayType, incWrites);  
     }
 
-    public SootClass createArrayClass(JNewArrayExpr arrayExpr) {
-        Type arrayType = arrayExpr.getType();
-        String arrayClassName = arrayType
+    public String arrayTypeToName(Type arrayType) {
+        return arrayType
             .toString()
             .replace(".", "")
-            .replace("[", "")
-            .replace("]", "Array");
+            .replace("[]", "Array");
+    }
+
+    public SootClass createArrayClass(JNewArrayExpr arrayExpr, HashMap <String, SootMethod> classNamesToReadIncrementors, HashMap <String, SootMethod> classNamesToWriteIncrementors) {
+        Type arrayType = arrayExpr.getType();
+        String arrayClassName = arrayTypeToName(arrayType);
 
         if (this.arrayClasses.containsKey(arrayClassName)) {
             return this.arrayClasses.get(arrayClassName);
@@ -141,22 +144,17 @@ public class ArrayWrapperCreator {
         arrayClass.setApplicationClass();
 
         HashMap <String, ObjectProfilingData> classNamesToObjectData = new HashMap<>();
-        HashMap <String, SootMethod> classNamesToReadIncrementors = new HashMap<>();
-        HashMap <String, SootMethod> classNamesToWriteIncrementors = new HashMap<>();
-        ClassInstrumentationUtil.addObjectAccessFields(arrayClass, this.counterClass, classNamesToObjectData, 
+        ClassInstrumentationUtil.addObjectAccessFields(arrayClass, this.counterClass, arrayClassName, classNamesToObjectData, 
               classNamesToReadIncrementors, classNamesToWriteIncrementors);
         SootField array = new SootField("array", arrayType);
         arrayClass.addField(array);
         System.out.println("Created class " + signature);
-        System.out.println("Array type = " + arrayType.toString() + ", element type = " + ((ArrayType)arrayType).getElementType().toString());
-        ObjectProfilingData data = classNamesToObjectData.get(arrayClass.getName());
+        System.out.println("Array type = " + arrayType.toString() + ", element type = " 
+            + ((ArrayType)arrayType).getElementType().toString());
+        ObjectProfilingData data = classNamesToObjectData.get(arrayClassName);
         SootMethod constructor = createArrayConstructor(arrayClass, arrayClassName, arrayType, data.staticCounter); 
-
-        String [] strArray = arrayClass.getName().split("\\.");
-        String className = strArray[strArray.length - 1];
-        String joinedClassName = String.join("", strArray);
-        SootMethod incReads = classNamesToReadIncrementors.get(joinedClassName);
-        SootMethod incWrites = classNamesToWriteIncrementors.get(joinedClassName);
+        SootMethod incReads = classNamesToReadIncrementors.get(arrayClassName);
+        SootMethod incWrites = classNamesToWriteIncrementors.get(arrayClassName);
         createArrayAccessMethods(arrayClass, arrayClassName, (ArrayType)arrayType, incReads, incWrites);
         this.arrayClasses.put(arrayClassName, arrayClass);
         return arrayClass; 

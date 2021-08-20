@@ -13,7 +13,7 @@ import java.util.HashSet;
 import java.util.List;
 
 public class ClassInstrumentationUtil {
-    static void addObjectAccessFields(SootClass currentClass, SootClass counterClass, HashMap <String, ObjectProfilingData> classNamesToObjectData, 
+    static void addObjectAccessFields(SootClass currentClass, SootClass counterClass, String name, HashMap <String, ObjectProfilingData> classNamesToObjectData, 
         HashMap <String, SootMethod> classNamesToReadIncrementors, HashMap <String, SootMethod> classNamesToWriteIncrementors) {
         String [] strArray = currentClass.getName().split("\\.");
         String className = strArray[strArray.length - 1];
@@ -22,12 +22,12 @@ public class ClassInstrumentationUtil {
         SootField serialField = addClassField("serial", currentClass);
         SootField readsField = addClassField("reads", currentClass);
         SootField writesField = addClassField("writes", currentClass);
-        classNamesToObjectData.put(currentClass.getName(), 
+        classNamesToObjectData.put(name, 
             new ObjectProfilingData(staticCounter, serialField, readsField, writesField));
 
-        classNamesToReadIncrementors.put(joinedClassName,
+        classNamesToReadIncrementors.put(name,
             createIncrementor(currentClass, "incReads", readsField, currentClass.getName() + " object reads = "));
-        classNamesToWriteIncrementors.put(joinedClassName, 
+        classNamesToWriteIncrementors.put(name, 
             createIncrementor(currentClass, "incWrites", writesField, currentClass.getName() + " object writes = "));
 
     }

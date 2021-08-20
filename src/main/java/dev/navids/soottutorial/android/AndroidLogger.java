@@ -111,7 +111,7 @@ public class AndroidLogger {
             }
             System.out.println("Class : " + currentClass.getName());
             List<SootMethod> methods = currentClass.getMethods();
-            ClassInstrumentationUtil.addObjectAccessFields(currentClass, counterClass, classNamesToObjectData, 
+            ClassInstrumentationUtil.addObjectAccessFields(currentClass, counterClass, currentClass.getName(), classNamesToObjectData, 
                   classNamesToReadIncrementors, classNamesToWriteIncrementors);
                 ObjectProfilingData data = classNamesToObjectData.get(currentClass.getName());
             for (SootMethod m : methods) {
@@ -172,8 +172,18 @@ public class AndroidLogger {
             JimpleBody body = (JimpleBody) b;
             UnitPatchingChain units = body.getUnits();
             Iterator<Unit> it = units.iterator();
+            HashMap <String,SootClass> namesToArrayClasses = new HashMap<>();
             ArrayList<InsertionPair<Unit>> beforePairs = new ArrayList<InsertionPair<Unit>>();
-            ArrayList<InsertionPair<Unit>> afterPairs = new ArrayList<InsertionPair<Unit>>();
+            ArrayList<InsertionPair<Unit>> swapPairs = new ArrayList<InsertionPair<Unit>>();
+//            it = units.iterator();
+//            while (it.hasNext()) {
+//                Unit unit = it.next();
+//                if (unit instanceof JAssignStmt) {
+//                    Value lhs = ((JAssignStmt)unit).getLeftOp();
+//                    Value rhs = ((JAssignStmt)unit).getRightOp();
+//
+//            }
+            
             while (it.hasNext()) {
                 Unit unit = it.next();
                 if (unit instanceof JAssignStmt) {
@@ -184,7 +194,35 @@ public class AndroidLogger {
                             beforePairs, classNamesToWriteIncrementors, unit); 
                     }
                     else if (lhs instanceof JNewArrayExpr) {
-                        this.arrayWrapperCreator.createArrayClass((JNewArrayExpr)lhs);
+                        this.arrayWrapperCreator.createArrayClass((JNewArrayExpr)lhs, 
+                            classNamesToReadIncrementors, classNamesToWriteIncrementors);
+                    }
+                    else if (lhs instanceof JArrayRef) {
+                        System.out.println(unit.toString());
+                        Type arrayType = ((ArrayRef)lhs).getBase().getType();
+                        String typeString = this.arrayWrapperCreator.arrayTypeToName(arrayType);
+                        System.out.println("Raw type: " + arrayType.toString());
+                        System.out.println("TYPE: " + typeString);
+
+//                        SootClass arrayClass = Scene.v().getSootClass(typeString);
+                        SootClass arrayClass = namesToArrayClasses.get(typeString);
+                        if (arrayClass == null) {
+                            System.out.println(typeString + " class doesn't exist");
+                        
+                        }
+                        Value lhsLocal = ((JArrayRef)lhs).getBase();
+                        ((Local)lhsLocal).setType(arrayType);
+
+                        List<SootMethod> methods = arrayClass.getMethods();
+                        System.out.println("Class: " + typeString);
+                        for (SootMethod m : methods) {
+                            System.out.println("\tmethod: "+m.getName());
+                        }
+                        SootMethod setMethod = arrayClass.getMethodByName("set");
+                        Unit call = Jimple.v().newInvokeStmt(Jimple.v().newVirtualInvokeExpr((Local)lhsLocal, 
+                            setMethod.makeRef(), ((JArrayRef)lhs).getIndex(), rhs));
+                        swapPairs.add(new InsertionPair<Unit>(call, unit));
+                        System.out.println("set: " + setMethod.getName());
                     }
 
                     if (rhs instanceof JInstanceFieldRef) {
@@ -192,25 +230,50 @@ public class AndroidLogger {
                             beforePairs, classNamesToReadIncrementors, unit);
                     }
                     else if (rhs instanceof JNewArrayExpr) {
-                        SootClass wrapper = this.arrayWrapperCreator.createArrayClass((JNewArrayExpr)rhs);
+                        SootClass wrapper = this.arrayWrapperCreator.createArrayClass((JNewArrayExpr)rhs, 
+                            classNamesToReadIncrementors, classNamesToWriteIncrementors);
+//                        String [] strArray = wrapper
+//                            .getType()
+//                            .toString();
+//                            .split("\\.");
+//                        String wrapperName = strArray[strArray.length - 1];
+
+//                        String wrapperName = wrapper.getType().toString();
+
+                        String wrapperName = this.arrayWrapperCreator.arrayTypeToName(wrapper.getType());
+                        System.out.println("Initial Raw type : " + wrapper.getType().toString());
+                        System.out.println("Initial Adding to map " + wrapperName) ;
+
+                        namesToArrayClasses.put(wrapperName, wrapper);
                         NewExpr newExpr = Jimple.v().newNewExpr(wrapper.getType());
+
+
                         Local wrapperLocal = InstrumentUtil.generateNewLocal(body, wrapper.getType());
-                        Unit wrapperAssign = Jimple.v().newAssignStmt(wrapperLocal, newExpr);
-                        InsertionPair<Unit>pair = new InsertionPair<Unit>(wrapperAssign, unit);
-                        afterPairs.add(pair);
-                        // TODO: Need to iterate through methods to get constructor
+
+                        Unit wrapperInit = Jimple.v().newAssignStmt(wrapperLocal, newExpr);
+
+                        beforePairs.add(new InsertionPair<Unit> (wrapperInit, unit));
+
                         Unit call = Jimple.v().newInvokeStmt((Jimple.v().newSpecialInvokeExpr(wrapperLocal, 
                             wrapper.getMethodByName("<init>").makeRef(), lhs)));
-                        afterPairs.add(new InsertionPair<Unit>(call, wrapperAssign));
+                        beforePairs.add(new InsertionPair<Unit>(call, unit));
+
+                        ((JimpleLocal)lhs).setType(wrapper.getType());
+                        Unit endingAssign = Jimple.v().newAssignStmt(lhs, wrapperLocal);
+                        swapPairs.add(new InsertionPair<Unit>(endingAssign, unit));
+                    }
+                    else if (rhs instanceof JArrayRef) {
+
                     }
                 }
             }
             for (InsertionPair<Unit> pair : beforePairs) {
                 units.insertBefore(pair.toInsert, pair.point);
             }
-            for (InsertionPair<Unit> pair : afterPairs) {
-                units.insertAfter(pair.toInsert, pair.point);
+            for (InsertionPair<Unit> pair : swapPairs) {
+                units.swapWith(pair.point, pair.toInsert);
             }
+
             System.out.println("Current class: " + b.getMethod().getDeclaringClass().getName());
             System.out.println("Validating:\n" + body.toString());
             body.validate();
