@@ -21,11 +21,11 @@ public class ArrayWrapperCreator {
         this.arrayClasses = new HashMap<>();
     }
 
-    public SootMethod createArrayConstructor(SootClass arrayClass, String arrayClassName, Type arrayType, SootField counterField) {
+    public SootMethod createArrayConstructor(SootClass arrayClass, String arrayClassName, Type elementType, SootField counterField) {
 
         String methodName = "<init>";
         SootMethod constructor = new SootMethod(methodName,
-            Arrays.asList(new Type[]{arrayType}),
+            Arrays.asList(new Type[]{IntType.v()}),
             VoidType.v(), Modifier.PUBLIC);
         arrayClass.addMethod(constructor);
         JimpleBody body = Jimple.v().newBody(constructor);
@@ -33,12 +33,18 @@ public class ArrayWrapperCreator {
         Value thisRef = Jimple.v().newThisRef(arrayClass.getType());
         Local thisLocal = InstrumentUtil.generateNewLocal(body, arrayClass.getType());
         units.add(Jimple.v().newIdentityStmt(thisLocal, thisRef));
-        Local paramLocal = InstrumentUtil.generateNewLocal(body, arrayType);
-        ParameterRef arrayParam = Jimple.v().newParameterRef(arrayType, 0);
-        units.add(Jimple.v().newIdentityStmt(paramLocal, arrayParam));
+        Local paramLocal = InstrumentUtil.generateNewLocal(body, IntType.v());
+        ParameterRef lengthParam = Jimple.v().newParameterRef(IntType.v(), 0);
+        units.add(Jimple.v().newIdentityStmt(paramLocal, lengthParam));
         InstanceFieldRef arrayFieldRef = Jimple.v().newInstanceFieldRef(thisLocal, 
             arrayClass.getFieldByName("array").makeRef());
-        units.add(Jimple.v().newAssignStmt(arrayFieldRef, paramLocal));
+//        units.add(Jimple.v().newAssignStmt(arrayFieldRef, paramLocal));
+
+        Local newArrayLocal = InstrumentUtil.generateNewLocal(body, elementType.makeArrayType());
+        units.add(Jimple.v().newAssignStmt(newArrayLocal, 
+            Jimple.v().newNewArrayExpr(elementType, paramLocal)));
+
+        units.add(Jimple.v().newAssignStmt(arrayFieldRef, newArrayLocal));
 
         Local counterLocal = InstrumentUtil.generateNewLocal(body, IntType.v());
         units.add(Jimple.v().newAssignStmt(counterLocal, Jimple.v().newStaticFieldRef(counterField.makeRef())));
@@ -58,8 +64,7 @@ public class ArrayWrapperCreator {
         return constructor;
     }
 
-    public void createArrayGetter(SootClass arrayClass, String arrayClassName, ArrayType arrayType, SootMethod incReads) {
-        Type elementType = arrayType.getElementType();
+    public void createArrayGetter(SootClass arrayClass, String arrayClassName, Type elementType, SootMethod incReads) {
         String methodName = "get";
         SootMethod getter = new SootMethod(methodName,
             Arrays.asList(new Type[]{IntType.v()}),
@@ -73,8 +78,9 @@ public class ArrayWrapperCreator {
         Local indexLocal = InstrumentUtil.generateNewLocal(body, IntType.v());
         ParameterRef indexParam = Jimple.v().newParameterRef(IntType.v(), 0);
         units.add(Jimple.v().newIdentityStmt(indexLocal, indexParam));
-        Local arrayLocal = InstrumentUtil.generateNewLocal(body, arrayType);
-        InstanceFieldRef serialFieldRef = Jimple.v().newInstanceFieldRef(thisLocal, arrayClass.getFieldByName("array").makeRef());
+        Local arrayLocal = InstrumentUtil.generateNewLocal(body, elementType.makeArrayType());
+        InstanceFieldRef serialFieldRef = Jimple.v().newInstanceFieldRef(thisLocal, 
+            arrayClass.getFieldByName("array").makeRef());
         units.add(Jimple.v().newAssignStmt(arrayLocal, serialFieldRef));
         Local valueLocal = InstrumentUtil.generateNewLocal(body, elementType);
         units.add(Jimple.v().newAssignStmt(valueLocal, Jimple.v().newArrayRef(arrayLocal, indexLocal)));
@@ -86,8 +92,7 @@ public class ArrayWrapperCreator {
         body.validate();
         getter.setActiveBody(body);
     }
-    public void createArraySetter(SootClass arrayClass, String arrayClassName, ArrayType arrayType, SootMethod incWrites) {
-        Type elementType = arrayType.getElementType();
+    public void createArraySetter(SootClass arrayClass, String arrayClassName, Type elementType, SootMethod incWrites) {
         String methodName = "set";
         SootMethod setter = new SootMethod(methodName,
             Arrays.asList(new Type[]{IntType.v(), elementType}),
@@ -104,7 +109,7 @@ public class ArrayWrapperCreator {
         Local valueLocal = InstrumentUtil.generateNewLocal(body, elementType);
         ParameterRef valueParam = Jimple.v().newParameterRef(elementType, 1);
         units.add(Jimple.v().newIdentityStmt(valueLocal, valueParam));
-        Local arrayLocal = InstrumentUtil.generateNewLocal(body, arrayType);
+        Local arrayLocal = InstrumentUtil.generateNewLocal(body, elementType.makeArrayType());
         InstanceFieldRef serialFieldRef = Jimple.v().newInstanceFieldRef(thisLocal, 
             arrayClass.getFieldByName("array").makeRef());
         units.add(Jimple.v().newAssignStmt(arrayLocal, serialFieldRef));
@@ -119,21 +124,21 @@ public class ArrayWrapperCreator {
     }
 
     public void createArrayAccessMethods(SootClass arrayClass, String arrayClassName, 
-                ArrayType arrayType, SootMethod incReads, SootMethod incWrites) {
-        createArrayGetter(arrayClass, arrayClassName, arrayType, incReads); 
-        createArraySetter(arrayClass, arrayClassName, arrayType, incWrites);  
+                Type elementType, SootMethod incReads, SootMethod incWrites) {
+        createArrayGetter(arrayClass, arrayClassName, elementType, incReads); 
+        createArraySetter(arrayClass, arrayClassName, elementType, incWrites);  
     }
 
-    public String arrayTypeToName(Type arrayType) {
-        return arrayType
+    public String arrayTypeToName(Type elementType) {
+        return elementType
             .toString()
             .replace(".", "")
-            .replace("[]", "Array");
+            .replace("[]", "Array")
+            + "Array";
     }
 
-    public SootClass createArrayClass(JNewArrayExpr arrayExpr, HashMap <String, SootMethod> classNamesToReadIncrementors, HashMap <String, SootMethod> classNamesToWriteIncrementors) {
-        Type arrayType = arrayExpr.getType();
-        String arrayClassName = arrayTypeToName(arrayType);
+    public SootClass createArrayClass(Type elementType, HashMap <String, SootMethod> classNamesToReadIncrementors, HashMap <String, SootMethod> classNamesToWriteIncrementors) {
+        String arrayClassName = arrayTypeToName(elementType);
 
         if (this.arrayClasses.containsKey(arrayClassName)) {
             return this.arrayClasses.get(arrayClassName);
@@ -146,16 +151,15 @@ public class ArrayWrapperCreator {
         HashMap <String, ObjectProfilingData> classNamesToObjectData = new HashMap<>();
         ClassInstrumentationUtil.addObjectAccessFields(arrayClass, this.counterClass, arrayClassName, classNamesToObjectData, 
               classNamesToReadIncrementors, classNamesToWriteIncrementors);
-        SootField array = new SootField("array", arrayType);
+        SootField array = new SootField("array", elementType.makeArrayType());
         arrayClass.addField(array);
         System.out.println("Created class " + signature);
-        System.out.println("Array type = " + arrayType.toString() + ", element type = " 
-            + ((ArrayType)arrayType).getElementType().toString());
+        System.out.println("Array type = " + elementType.getArrayType().toString() + ", element type = ");
         ObjectProfilingData data = classNamesToObjectData.get(arrayClassName);
-        SootMethod constructor = createArrayConstructor(arrayClass, arrayClassName, arrayType, data.staticCounter); 
+        SootMethod constructor = createArrayConstructor(arrayClass, arrayClassName, elementType, data.staticCounter); 
         SootMethod incReads = classNamesToReadIncrementors.get(arrayClassName);
         SootMethod incWrites = classNamesToWriteIncrementors.get(arrayClassName);
-        createArrayAccessMethods(arrayClass, arrayClassName, (ArrayType)arrayType, incReads, incWrites);
+        createArrayAccessMethods(arrayClass, arrayClassName, elementType, incReads, incWrites);
         this.arrayClasses.put(arrayClassName, arrayClass);
         return arrayClass; 
     }
