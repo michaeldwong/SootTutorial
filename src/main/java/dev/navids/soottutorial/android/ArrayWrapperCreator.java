@@ -58,7 +58,7 @@ public class ArrayWrapperCreator {
         Unit returnUnit = Jimple.v().newReturnVoidStmt();
         units.add(returnUnit);
 
-        System.out.println("NEW CONSTRUCTOR:\n" + body.toString());
+//        System.out.println("NEW CONSTRUCTOR:\n" + body.toString());
         body.validate();
         constructor.setActiveBody(body);
         return constructor;
@@ -88,7 +88,7 @@ public class ArrayWrapperCreator {
         units.add(call);
         Unit returnUnit = Jimple.v().newReturnStmt(valueLocal);
         units.add(returnUnit);
-        System.out.println("NEW GETTER:\n" + body.toString());
+//        System.out.println("NEW GETTER:\n" + body.toString());
         body.validate();
         getter.setActiveBody(body);
     }
@@ -118,7 +118,7 @@ public class ArrayWrapperCreator {
         units.add(call);
         Unit returnUnit = Jimple.v().newReturnVoidStmt();
         units.add(returnUnit);
-        System.out.println("NEW SETTER:\n" + body.toString());
+//        System.out.println("NEW SETTER:\n" + body.toString());
         body.validate();
         setter.setActiveBody(body);
     }
@@ -130,11 +130,8 @@ public class ArrayWrapperCreator {
     }
 
     public String arrayTypeToName(Type elementType) {
-        return elementType
-            .toString()
-            .replace(".", "")
-            .replace("[]", "Array")
-            + "Array";
+        String [] strArray = elementType.toString().split("\\.");
+        return strArray[strArray.length - 1] + "Array";
     }
 
     public SootClass createArrayClass(Type elementType, HashMap <String, SootMethod> classNamesToReadIncrementors, HashMap <String, SootMethod> classNamesToWriteIncrementors) {
