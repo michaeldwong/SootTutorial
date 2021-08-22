@@ -164,6 +164,9 @@ public class AndroidLogger {
             String [] strArray = elementType.toString().split("\\.");
             return strArray[strArray.length - 1];
         }
+        private boolean isArrayType(Type type) {
+            return type.toString().contains("[]");
+        }
 
         @Override
         protected void internalTransform(Body b, String phaseName, Map<String, String> options) {
@@ -181,7 +184,6 @@ public class AndroidLogger {
             HashMap <String,SootClass> namesToArrayClasses = new HashMap<>();
             ArrayList<InsertionPair<Unit>> beforePairs = new ArrayList<InsertionPair<Unit>>();
             ArrayList<InsertionPair<Unit>> swapPairs = new ArrayList<InsertionPair<Unit>>();
-            
             System.out.println("ORIGINAL: " + body.toString());
             while (it.hasNext()) {
                 Unit unit = it.next();
@@ -197,7 +199,6 @@ public class AndroidLogger {
                     else if (lhs instanceof JArrayRef) {
                         arrayRefWrite(unit, lhs, rhs, namesToArrayClasses, beforePairs, swapPairs);
                     }
-
                     if (rhs instanceof JInstanceFieldRef) {
                         invokeObjectMethods((JInstanceFieldRef)rhs, 
                             beforePairs, this.classNamesToReadIncrementors, unit);
@@ -208,8 +209,47 @@ public class AndroidLogger {
                     else if (rhs instanceof JArrayRef) {
 
                     }
+                }
+            }
+            for (InsertionPair<Unit> pair : beforePairs) {
+                units.insertBefore(pair.toInsert, pair.point);
+            }
+            for (InsertionPair<Unit> pair : swapPairs) {
+                units.swapWith(pair.point, pair.toInsert);
+            }
+            beforePairs.clear();
+            swapPairs.clear();
+            it = units.iterator();
+            while (it.hasNext()) {
+                Unit unit = it.next();
+                if (unit instanceof JAssignStmt) {
+                    Value lhs = ((JAssignStmt)unit).getLeftOp();
+                    Value rhs = ((JAssignStmt)unit).getRightOp();
+                    if (isArrayType(lhs.getType())) {
+                        System.out.println("\tlhs is array : " + lhs.toString() + " and is type " + lhs.getClass().getName());
+                        System.out.println("\trhs : " + rhs.toString() + " is type " + rhs.getClass().getName());
 
 
+                        String wrapperName = typeToWrapperName(rhs.getType());
+                        SootClass wrapper;
+                        System.out.println("Current wrapperName = " + wrapperName);
+                        if (namesToArrayClasses.containsKey(wrapperName)) {
+                            wrapper = namesToArrayClasses.get(wrapperName);
+                        }
+                        else continue;
+                        Local local = InstrumentUtil.generateNewLocal(body, lhs.getType());
+                        InstanceFieldRef arrayField = Jimple.v().newInstanceFieldRef(rhs, 
+                          wrapper.getFieldByName("array").makeRef());
+                        Unit init = Jimple.v().newAssignStmt(local, arrayField);
+                        beforePairs.add(new InsertionPair<Unit>(init, unit));
+                        Unit assign = Jimple.v().newAssignStmt(lhs, local);
+                        swapPairs.add(new InsertionPair<Unit>(assign, unit));
+                    
+//                    InstanceFieldRef arrayField = Jimple.v().newInstanceFieldRef(rhs, 
+//                        arrayClass.getFieldByName("array").makeRef());
+
+//                       lhs.setType(rhs.getType());
+                    }
                 }
             }
             for (InsertionPair<Unit> pair : beforePairs) {
