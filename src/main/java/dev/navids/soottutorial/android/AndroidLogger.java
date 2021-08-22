@@ -162,7 +162,11 @@ public class AndroidLogger {
 
         public String typeToWrapperName(Type elementType) {
             String [] strArray = elementType.toString().split("\\.");
-            return strArray[strArray.length - 1];
+            String lastElement = strArray[strArray.length - 1];
+            if (isArrayType(elementType)) {
+                return lastElement.replace("[]", "Array");
+            }
+            return lastElement;
         }
         private boolean isArrayType(Type type) {
             return type.toString().contains("[]");
@@ -178,15 +182,42 @@ public class AndroidLogger {
                 return;
             }
             lock.lock();
+
             JimpleBody body = (JimpleBody) b;
             UnitPatchingChain units = body.getUnits();
             Iterator<Unit> it = units.iterator();
             HashMap <String,SootClass> namesToArrayClasses = new HashMap<>();
             ArrayList<InsertionPair<Unit>> beforePairs = new ArrayList<InsertionPair<Unit>>();
             ArrayList<InsertionPair<Unit>> swapPairs = new ArrayList<InsertionPair<Unit>>();
+            changeMethodParameterTypes(b.getMethod(), namesToArrayClasses);
+
+            // TODO: Move cahngeMethodtypes and paramref updates to another function 
+            // pass over classes. Then, once method signatures ahve been changed, 
+            // Make the pass to the object access methods
             System.out.println("ORIGINAL: " + body.toString());
             while (it.hasNext()) {
                 Unit unit = it.next();
+                if (unit instanceof JIdentityStmt) {
+                    Value rhs = ((JIdentityStmt)unit).getRightOp();
+                    Value lhs = ((JIdentityStmt)unit).getLeftOp();
+                    if (rhs instanceof ParameterRef) {
+                        Type t = rhs.getType();
+                        if (isArrayType(t)) {
+                            Type elementType = ((ArrayType)t).getElementType();
+                            String wrapperName = typeToWrapperName(elementType);
+                            if (!namesToArrayClasses.containsKey(wrapperName)) {
+                                System.out.println(wrapperName + " NOT included for paramref updates");
+                            }
+                            SootClass wrapper = namesToArrayClasses.get(wrapperName);
+                            ParameterRef newParamRef = Jimple.v().newParameterRef(
+                                wrapper.getType(),
+                                ((ParameterRef)rhs).getIndex()
+                            );
+                            ((JimpleLocal)lhs).setType(wrapper.getType());
+                            ((JIdentityStmt)unit).setRightOp(newParamRef);
+                        }
+                    }
+                }
                 if (unit instanceof JAssignStmt) {
                     Value lhs = ((JAssignStmt)unit).getLeftOp();
                     Value rhs = ((JAssignStmt)unit).getRightOp();
@@ -226,20 +257,21 @@ public class AndroidLogger {
                     Value lhs = ((JAssignStmt)unit).getLeftOp();
                     Value rhs = ((JAssignStmt)unit).getRightOp();
                     if (isArrayType(lhs.getType())) {
+                        System.out.println(unit.toString());
                         System.out.println("\tlhs is array : " + lhs.toString() + " and is type " + lhs.getClass().getName());
                         System.out.println("\trhs : " + rhs.toString() + " is type " + rhs.getClass().getName());
-
-
                         String wrapperName = typeToWrapperName(rhs.getType());
                         SootClass wrapper;
                         System.out.println("Current wrapperName = " + wrapperName);
                         if (namesToArrayClasses.containsKey(wrapperName)) {
                             wrapper = namesToArrayClasses.get(wrapperName);
                         }
-                        else continue;
+                        else {
+                            continue;
+                        }
                         Local local = InstrumentUtil.generateNewLocal(body, lhs.getType());
                         InstanceFieldRef arrayField = Jimple.v().newInstanceFieldRef(rhs, 
-                          wrapper.getFieldByName("array").makeRef());
+                            wrapper.getFieldByName("array").makeRef());
                         Unit init = Jimple.v().newAssignStmt(local, arrayField);
                         beforePairs.add(new InsertionPair<Unit>(init, unit));
                         Unit assign = Jimple.v().newAssignStmt(lhs, local);
@@ -250,6 +282,12 @@ public class AndroidLogger {
 
 //                       lhs.setType(rhs.getType());
                     }
+                    if (isArrayType(rhs.getType())) {
+                        System.out.println(unit.toString());
+                        System.out.println("\trhs is array : " + rhs.toString() + " and is type " + rhs.getClass().getName());
+                        System.out.println("\tlhs : " + lhs.toString() + " is type " + lhs.getClass().getName());
+
+                   }
                 }
             }
             for (InsertionPair<Unit> pair : beforePairs) {
@@ -259,10 +297,42 @@ public class AndroidLogger {
                 units.swapWith(pair.point, pair.toInsert);
             }
 
+
             System.out.println("Current class: " + b.getMethod().getDeclaringClass().getName());
             System.out.println("Validating:\n" + body.toString());
             body.validate();
             lock.unlock();
+        }
+
+        private void changeMethodParameterTypes(SootMethod method, HashMap <String,SootClass> namesToArrayClasses) {
+            boolean changed = false;
+            List <Type> paramTypes = method.getParameterTypes();
+            for (int i = 0; i < paramTypes.size(); i++) {
+                Type t = paramTypes.get(i);
+                if (isArrayType(t)) {
+                    Type elementType = ((ArrayType)t).getElementType();
+                    String wrapperName = typeToWrapperName(elementType);
+                    System.out.println("Changing type " + t.toString() + " to " + wrapperName);
+                    SootClass wrapper;
+                    if (!namesToArrayClasses.containsKey(wrapperName)) {
+                        System.out.println("wrapperName not present for method param change");
+                        wrapper = this.arrayWrapperCreator.createArrayClass(elementType, 
+                            this.classNamesToReadIncrementors, this.classNamesToWriteIncrementors);
+                        namesToArrayClasses.put(wrapperName, wrapper);
+
+                    }
+                    else {
+                        wrapper = namesToArrayClasses.get(wrapperName);
+                    }
+                    Type newType = wrapper.getType(); 
+                    paramTypes.set(i, newType);
+                    changed = true;
+                }
+            }
+            if (changed) {
+                method.setParameterTypes(paramTypes);
+                System.out.println("Changed : " + method.toString());
+            }
         }
 
         private void arrayRefWrite(Unit unit, Value lhs, Value rhs, HashMap <String,SootClass>namesToArrayClasses, 
@@ -283,6 +353,7 @@ public class AndroidLogger {
                 wrapperName = this.arrayWrapperCreator.arrayTypeToName(elementType);
                 wrapper = this.arrayWrapperCreator.createArrayClass(elementType, 
                     this.classNamesToReadIncrementors, this.classNamesToWriteIncrementors);
+                System.out.println("Creating wrapper for " + wrapperName);
                 namesToArrayClasses.put(wrapperName, wrapper); 
             }
             Value lhsLocal = ((JArrayRef)lhs).getBase();
@@ -313,6 +384,7 @@ public class AndroidLogger {
                 wrapper = this.arrayWrapperCreator.createArrayClass(elementType, 
                     this.classNamesToReadIncrementors, this.classNamesToWriteIncrementors);
                 namesToArrayClasses.put(wrapperName, wrapper);
+                System.out.println("Creating wrapper for " + wrapperName);
             }
             namesToArrayClasses.put(wrapperName, wrapper);
             NewExpr newExpr = Jimple.v().newNewExpr(wrapper.getType());
