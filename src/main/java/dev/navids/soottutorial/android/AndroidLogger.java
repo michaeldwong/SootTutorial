@@ -308,31 +308,42 @@ public class AndroidLogger {
             boolean changed = false;
             List <Type> paramTypes = method.getParameterTypes();
             for (int i = 0; i < paramTypes.size(); i++) {
-                Type t = paramTypes.get(i);
-                if (isArrayType(t)) {
-                    Type elementType = ((ArrayType)t).getElementType();
-                    String wrapperName = typeToWrapperName(elementType);
-                    System.out.println("Changing type " + t.toString() + " to " + wrapperName);
-                    SootClass wrapper;
-                    if (!namesToArrayClasses.containsKey(wrapperName)) {
-                        System.out.println("wrapperName not present for method param change");
-                        wrapper = this.arrayWrapperCreator.createArrayClass(elementType, 
-                            this.classNamesToReadIncrementors, this.classNamesToWriteIncrementors);
-                        namesToArrayClasses.put(wrapperName, wrapper);
-
-                    }
-                    else {
-                        wrapper = namesToArrayClasses.get(wrapperName);
-                    }
-                    Type newType = wrapper.getType(); 
-                    paramTypes.set(i, newType);
-                    changed = true;
+                Type t = convertTypeIfArray(paramTypes.get(i), namesToArrayClasses);
+                if (t == null) {
+                    continue; 
                 }
+                paramTypes.set(i, t);
+                changed = true;
             }
             if (changed) {
                 method.setParameterTypes(paramTypes);
                 System.out.println("Changed : " + method.toString());
             }
+            Type t = convertTypeIfArray(method.getReturnType(), namesToArrayClasses);
+            if (t != null) {
+                method.setReturnType(t);
+                System.out.println("Changed return : " + method.toString());
+            }
+        }
+        private Type convertTypeIfArray(Type t, HashMap <String,SootClass>namesToArrayClasses) {
+            // If t is an array, convert to wrapper type and return it. Otherwise return null
+            if (isArrayType(t)) {
+                Type elementType = ((ArrayType)t).getElementType();
+                String wrapperName = typeToWrapperName(elementType);
+                System.out.println("Changing type " + t.toString() + " to " + wrapperName);
+                SootClass wrapper;
+                if (!namesToArrayClasses.containsKey(wrapperName)) {
+                    System.out.println("wrapperName not present for method param change");
+                    wrapper = this.arrayWrapperCreator.createArrayClass(elementType, 
+                        this.classNamesToReadIncrementors, this.classNamesToWriteIncrementors);
+                    namesToArrayClasses.put(wrapperName, wrapper);
+                }
+                else {
+                    wrapper = namesToArrayClasses.get(wrapperName);
+                }
+                return wrapper.getType(); 
+            }
+            return null;
         }
 
         private void arrayRefWrite(Unit unit, Value lhs, Value rhs, HashMap <String,SootClass>namesToArrayClasses, 
