@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -159,6 +160,50 @@ public class ClassInstrumentationUtil {
         body.validate();
         incMethod.setActiveBody(body);
         return incMethod;
+    }
+    static boolean isArrayType(Type type) {
+        return type.toString().contains("[]");
+    }
+    static String typeToWrapperName(Type elementType) {
+        String [] strArray = elementType.toString().split("\\.");
+        String lastElement = strArray[strArray.length - 1];
+        if (ClassInstrumentationUtil.isArrayType(elementType)) {
+            return lastElement.replace("[]", "Array");
+        }
+        return lastElement;
+    }
+    static void addSerialInitialization(JimpleBody body, SootField serialField, SootField staticCounterField, SootClass currentClass) {
+        UnitPatchingChain units = body.getUnits();
+        Iterator<Unit> it = units.iterator();
+        Value thisRefLocal = null;
+        while (it.hasNext()) {
+            Unit unit = it.next();
+            if (unit instanceof JIdentityStmt) {
+                Value rightOp = ((JIdentityStmt)unit).getRightOp();
+                if (rightOp instanceof ThisRef) {
+                    thisRefLocal = ((JIdentityStmt)unit).getLeftOp();
+                }
+            }
+        }
+        if (thisRefLocal == null) {
+            thisRefLocal = Jimple.v().newThisRef(currentClass.getType());
+        }
+        InstanceFieldRef serialFieldRef = Jimple.v().newInstanceFieldRef(thisRefLocal, serialField.makeRef());
+        Local counterLocal = InstrumentUtil.generateNewLocal(body, IntType.v());
+        Unit u1 = Jimple.v().newAssignStmt(counterLocal, Jimple.v().newStaticFieldRef(staticCounterField.makeRef()));
+        Unit u2 = Jimple.v().newAssignStmt(counterLocal, 
+                Jimple.v().newAddExpr(counterLocal, IntConstant.v(1)));
+        Unit u3 = Jimple.v().newAssignStmt(serialFieldRef, counterLocal);
+        Unit u4 = Jimple.v().newAssignStmt(Jimple.v().newStaticFieldRef(staticCounterField.makeRef()), counterLocal);
+
+        units.insertBefore(InstrumentUtil.generateLogStmts(body, currentClass.getName() + " intiailized id = ", 
+            counterLocal), body.getFirstNonIdentityStmt());
+        units.insertBefore(u4, body.getFirstNonIdentityStmt());
+        units.insertBefore(u3, body.getFirstNonIdentityStmt());
+        units.insertBefore(u2, body.getFirstNonIdentityStmt());
+        units.insertBefore(u1, body.getFirstNonIdentityStmt());
+
+        body.validate(); 
     }
 
 
