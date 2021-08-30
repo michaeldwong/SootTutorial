@@ -224,7 +224,6 @@ public class AndroidLogger {
             }
             return null;
         }
-
     }
 
     static class ObjectLoggingInjector extends BodyTransformer {
@@ -349,6 +348,10 @@ public class AndroidLogger {
                                 Type elementType = ((ArrayType)t).getElementType();
                                 SootClass wrapper = findWrapper(elementType);
                                 Local arrayLocal = InstrumentUtil.generateNewLocal(body, elementType);
+                                // TODO: Check if args.get(i) is null. If so, skip
+                                if (args.get(i).toString().contains("null")) {
+                                    System.out.println("\tThis is null. API type : " +  args.get(i).getClass().getName());
+                                }
                                 InstanceFieldRef arrayField = Jimple.v().newInstanceFieldRef(args.get(i), 
                                     wrapper.getFieldByName("array").makeRef());
                                 Unit arrayAssign = Jimple.v().newAssignStmt(arrayLocal, arrayField);
@@ -379,10 +382,13 @@ public class AndroidLogger {
                 if (unit instanceof JAssignStmt) {
                     Value lhs = ((JAssignStmt)unit).getLeftOp();
                     Value rhs = ((JAssignStmt)unit).getRightOp();
-                    System.out.println("\tLhs Type: " + lhs.getType().toString() + "\n");
-                    System.out.println("\tRhs Type: " + rhs.getType().toString() + "\n");
                     if (!lhs.getType().equals(rhs.getType())) {
-                        System.out.println("\t\tTYPES NOT EQUAL");
+                        System.out.println("TYPES NOT EQUAL");
+                        System.out.println("\tLhs Type: " + lhs.getType().toString() + "\n");
+                        System.out.println("\tRhs Type: " + rhs.getType().toString() + "\n");
+                        System.out.println("\t" + unit.toString());
+
+                            // TODO: Need to initialize wrapper before writing to it
                         if (ClassInstrumentationUtil.isArrayType(lhs.getType()) && rhs.getType().toString().contains("Array")) {
                             // if lhs is an array and a wrapper type is written to it,
                             // extract the array from the wrapper and rewrite the
@@ -396,7 +402,6 @@ public class AndroidLogger {
                             else {
                                 continue;
                             }
-                            System.out.println(unit.toString());
                             Local local = InstrumentUtil.generateNewLocal(body, lhs.getType());
                             InstanceFieldRef arrayField = Jimple.v().newInstanceFieldRef(rhs, 
                                 wrapper.getFieldByName("array").makeRef());
@@ -404,18 +409,41 @@ public class AndroidLogger {
                             beforePairs.add(new InsertionPair<Unit>(init, unit));
                             Unit assign = Jimple.v().newAssignStmt(lhs, local);
                             swapPairs.add(new InsertionPair<Unit>(assign, unit));
+                            System.out.println("\tPath 1 Inserting: " + init.toString() + "\n\t" + assign.toString() + "\n");
                         }
-
+                        else if (ClassInstrumentationUtil.isArrayType(rhs.getType()) && lhs.getType().toString().contains("Array")) {
+                            // if rhs is an array and it is written to a wrapper type on lhs,
+                            // write the array directly to the wrapper's array object
+                            Type elementType = ((ArrayType)rhs.getType()).getElementType();
+                            String wrapperName = ClassInstrumentationUtil.typeToWrapperName(lhs.getType());
+                            SootClass wrapper;
+                            if (this.namesToArrayClasses.containsKey(wrapperName)) {
+                                wrapper = this.namesToArrayClasses.get(wrapperName);
+                            }
+                            else {
+                                continue;
+                            }
+                            Local local = InstrumentUtil.generateNewLocal(body, rhs.getType());
+                            InstanceFieldRef arrayField = Jimple.v().newInstanceFieldRef(lhs, 
+                                wrapper.getFieldByName("array").makeRef());
+                            Unit init = Jimple.v().newAssignStmt(local, rhs);
+                            beforePairs.add(new InsertionPair<Unit>(init, unit));
+                            Unit assign = Jimple.v().newAssignStmt(arrayField, local);
+                            swapPairs.add(new InsertionPair<Unit>(assign, unit));
+                            System.out.println("\tPath 2 Inserting: \n\t\t" + init.toString() + "\t\t\n" + assign.toString() + "\n");
+                        }
                     }
                 }
             }
             for (InsertionPair<Unit> pair : beforePairs) {
+                System.out.println("insertBefore\n\tinsert: " + pair.toInsert.toString() + "\n\tpoint: " + pair.point.toString());
                 units.insertBefore(pair.toInsert, pair.point);
             }
             for (InsertionPair<Unit> pair : swapPairs) {
+                System.out.println("swap\n\tinsert: " + pair.toInsert.toString() + "\n\tpoint: " + pair.point.toString());
                 units.swapWith(pair.point, pair.toInsert);
             }
-            it = units.iterator();
+//            it = units.iterator();
 //            while (it.hasNext()) {
 //                Unit unit = it.next();
 //                System.out.println(unit.toString());
@@ -513,7 +541,6 @@ public class AndroidLogger {
                 return;
             }
             SootMethod method = classNamesToIncrementors.get(joinedClassName);
-            System.out.println(currentClass.getName() + " found ");
             Local base = (Local)(fieldRef).getBase();
             Unit call = null;
             if (currentClass.isInterface()) {
