@@ -240,8 +240,6 @@ public class AndroidLogger {
             this.arrayWrapperCreator = arrayWrapperCreator;
         }
 
-
-
         @Override
         protected void internalTransform(Body b, String phaseName, Map<String, String> options) {
             // First we filter out Android framework methods
@@ -259,8 +257,10 @@ public class AndroidLogger {
             ArrayList<InsertionPair<Unit>> beforePairs = new ArrayList<InsertionPair<Unit>>();
             ArrayList<InsertionPair<Unit>> swapPairs = new ArrayList<InsertionPair<Unit>>();
             System.out.println("ORIGINAL: " + body.toString());
+            System.out.println("============ ROUND 1==========");
             while (it.hasNext()) {
                 Unit unit = it.next();
+                System.out.println("UNIT " + unit.toString());
                 if (unit instanceof JIdentityStmt) {
                     Value rhs = ((JIdentityStmt)unit).getRightOp();
                     Value lhs = ((JIdentityStmt)unit).getLeftOp();
@@ -280,6 +280,7 @@ public class AndroidLogger {
                     }
                 }
                 if (unit instanceof InvokeStmt) {
+                    System.out.println("\tOPT 1");
                     // Analyze args to see if there are any array types. If so,
                     // get array from the wrapper and pass it
                     InvokeExpr invokeExpr = ((InvokeStmt)unit).getInvokeExpr();
@@ -295,7 +296,6 @@ public class AndroidLogger {
                             if (args.get(i) instanceof NullConstant) {
                                 continue;
                             }
-
                             InstanceFieldRef arrayField = Jimple.v().newInstanceFieldRef(args.get(i), 
                                 wrapper.getFieldByName("array").makeRef());
                             Unit arrayAssign = Jimple.v().newAssignStmt(arrayLocal, arrayField);
@@ -307,26 +307,38 @@ public class AndroidLogger {
                 else if (unit instanceof JAssignStmt) {
                     Value lhs = ((JAssignStmt)unit).getLeftOp();
                     Value rhs = ((JAssignStmt)unit).getRightOp();
+                    System.out.println("\tLhs Type: " + lhs.getType().toString());
+                    System.out.println("\tRhs Type: " + rhs.getType().toString());
+
                     if (lhs instanceof JInstanceFieldRef) {
+                        System.out.println("\tOPT 2");
                         invokeObjectMethods((JInstanceFieldRef)lhs, 
                             beforePairs, this.classNamesToWriteIncrementors, unit); 
                     }
                     else if (lhs instanceof JNewArrayExpr) {
                     }
                     else if (lhs instanceof JArrayRef) {
+
+                        System.out.println("\tOPT 3");
                         // Replace array writes to wrapper get function
                         arrayRefWrite(unit, lhs, rhs, beforePairs, swapPairs);
                     }
                     if (rhs instanceof JInstanceFieldRef) {
+
+                        System.out.println("\tOPT 4");
                         // Insert accsss methods
                         invokeObjectMethods((JInstanceFieldRef)rhs, 
                             beforePairs, this.classNamesToReadIncrementors, unit);
                     }
                     else if (rhs instanceof JNewArrayExpr) {
+
+                        System.out.println("\tOPT 5");
                         // Replace new array instantiation with wrapper instantiation
                         replaceNewArray(unit, lhs, rhs, beforePairs, swapPairs);
                     }
                     else if (rhs instanceof InvokeExpr) {
+
+                        System.out.println("\tOPT 6");
                         // Analyze args to see if there are any array types. If so,
                         // get array from the wrapper and pass it
                         SootMethod calledMethod = ((InvokeExpr)rhs).getMethod();
@@ -350,6 +362,8 @@ public class AndroidLogger {
                         }
                     }
                     else if (rhs instanceof JArrayRef) {
+
+                        System.out.println("\tOPT 7");
                         arrayRefRead(unit, lhs, rhs, beforePairs, swapPairs);
                     }
                 }
@@ -363,17 +377,18 @@ public class AndroidLogger {
             beforePairs.clear();
             swapPairs.clear();
             it = units.iterator();
+            System.out.println("============= ROUND 2 ============");
             while (it.hasNext()) {
                 Unit unit = it.next();
+                System.out.println("UNIT " + unit.toString());
                 if (unit instanceof JAssignStmt) {
                     Value lhs = ((JAssignStmt)unit).getLeftOp();
                     Value rhs = ((JAssignStmt)unit).getRightOp();
+                    System.out.println("\tLhs Type: " + lhs.getType().toString());
+                    System.out.println("\tRhs Type: " + rhs.getType().toString());
                     if (!lhs.getType().equals(rhs.getType())) {
                         // TODO: Check if type casting is needed
                         System.out.println("TYPES NOT EQUAL");
-                        System.out.println("\t" + unit.toString());
-                        System.out.println("\tLhs Type: " + lhs.getType().toString());
-                        System.out.println("\tRhs Type: " + rhs.getType().toString());
                         if (ClassInstrumentationUtil.isArrayType(lhs.getType()) && rhs.getType().toString().contains("Array")) {
                             // if lhs is an array and a wrapper type is written to it,
                             // extract the array from the wrapper and rewrite the
@@ -419,6 +434,9 @@ public class AndroidLogger {
                             Unit assign = Jimple.v().newAssignStmt(arrayField, local);
                             swapPairs.add(new InsertionPair<Unit>(assign, unit));
                         }
+                        else if (lhs.getType().toString().contains("Array") && rhs.getType().toString().contains("Array")) {
+                            System.out.println("PATH 3");
+                        }
                         else {
                             System.out.println("NO PATH");
                         }
@@ -431,18 +449,6 @@ public class AndroidLogger {
             for (InsertionPair<Unit> pair : swapPairs) {
                 units.swapWith(pair.point, pair.toInsert);
             }
-//            it = units.iterator();
-//            while (it.hasNext()) {
-//                Unit unit = it.next();
-//                System.out.println(unit.toString());
-//                if (unit instanceof JAssignStmt) {
-//                    Value lhs = ((JAssignStmt)unit).getLeftOp();
-//                    Value rhs = ((JAssignStmt)unit).getRightOp();
-//                    System.out.println("\tlhs type : " + lhs.getType().toString());
-//                    System.out.println("\trhs type : " + lhs.getType().toString());
-//                    System.out.println("\t Types equal ? " + lhs.getType().equals(rhs.getType()) + "\n");
-//                }
-//            }
             System.out.println("Current class: " + b.getMethod().getDeclaringClass().getName());
             System.out.println("-------\n\n");
             System.out.println("Validating:\n" + body.toString());
@@ -468,11 +474,16 @@ public class AndroidLogger {
         private void arrayRefWrite(Unit unit, Value lhs, Value rhs,
                         ArrayList<InsertionPair<Unit>>beforePairs, ArrayList<InsertionPair<Unit>>swapPairs) {
             // Replaces write to array to use set method
-
+            // TODO: Error currently facing is line : r5[0] = r6
+            //      r6 is a Double and we're getting the wrapper for DOubleType. But 
+            //      r5 is supposed to be ObjectArray! If need to see error log,
+            //      keep log messages the same and search for ROUND 1 ->  
+            //      r5[0] = r6
             Type elementType = rhs.getType();
             SootClass wrapper = findWrapper(elementType);
             Value lhsLocal = ((JArrayRef)lhs).getBase();
             ((Local)lhsLocal).setType(wrapper.getType());
+
             SootMethod setMethod = wrapper.getMethodByName("set");
             Unit call = Jimple.v().newInvokeStmt(Jimple.v().newVirtualInvokeExpr((Local)lhsLocal, 
                 setMethod.makeRef(), ((JArrayRef)lhs).getIndex(), rhs));
@@ -481,12 +492,14 @@ public class AndroidLogger {
 
         private void replaceNewArray(Unit unit, Value lhs, Value rhs, 
                     ArrayList<InsertionPair<Unit>>beforePairs, ArrayList<InsertionPair<Unit>>swapPairs) {
+
             Type elementType = ((JNewArrayExpr)rhs).getBaseType();
             Value size = ((JNewArrayExpr)rhs).getSize();
-            SootClass wrapper = findWrapper(elementType);;
+            SootClass wrapper = findWrapper(elementType);
             NewExpr newExpr = Jimple.v().newNewExpr(wrapper.getType());
             ((JimpleLocal)lhs).setType(wrapper.getType());
             Unit wrapperInit = Jimple.v().newAssignStmt((JimpleLocal)lhs, newExpr);
+
             beforePairs.add(new InsertionPair<Unit> (wrapperInit, unit));
             Unit initCall = Jimple.v().newInvokeStmt((
                 Jimple.v().newSpecialInvokeExpr((JimpleLocal)lhs, 
@@ -539,8 +552,6 @@ public class AndroidLogger {
         }
 
     }
-
-
 
 
    /* ****************************************************
