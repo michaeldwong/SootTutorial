@@ -405,11 +405,11 @@ public class AndroidLogger {
                             Local local = InstrumentUtil.generateNewLocal(body, lhs.getType());
                             InstanceFieldRef arrayField = Jimple.v().newInstanceFieldRef(rhs, 
                                 wrapper.getFieldByName("array").makeRef());
+
                             Unit init = Jimple.v().newAssignStmt(local, arrayField);
                             beforePairs.add(new InsertionPair<Unit>(init, unit));
                             Unit assign = Jimple.v().newAssignStmt(lhs, local);
                             swapPairs.add(new InsertionPair<Unit>(assign, unit));
-                            System.out.println("\tPath 1 Inserting: " + init.toString() + "\n\t" + assign.toString() + "\n");
                         }
                         else if (ClassInstrumentationUtil.isArrayType(rhs.getType()) && lhs.getType().toString().contains("Array")) {
                             // if rhs is an array and it is written to a wrapper type on lhs,
@@ -426,21 +426,32 @@ public class AndroidLogger {
                             Local local = InstrumentUtil.generateNewLocal(body, rhs.getType());
                             InstanceFieldRef arrayField = Jimple.v().newInstanceFieldRef(lhs, 
                                 wrapper.getFieldByName("array").makeRef());
-                            Unit init = Jimple.v().newAssignStmt(local, rhs);
-                            beforePairs.add(new InsertionPair<Unit>(init, unit));
+
+
+                            NewExpr newExpr = Jimple.v().newNewExpr(wrapper.getType());
+                            ((JimpleLocal)lhs).setType(wrapper.getType());
+                            Unit wrapperInit = Jimple.v().newAssignStmt((JimpleLocal)lhs, newExpr);
+
+                            Unit initCall = Jimple.v().newInvokeStmt((
+                                Jimple.v().newSpecialInvokeExpr((JimpleLocal)lhs, 
+                                wrapper.getMethodByName("<init>").makeRef(), IntConstant.v(0))
+                            ));
+
+                            Unit arrayTemp = Jimple.v().newAssignStmt(local, rhs);
+                            beforePairs.add(new InsertionPair<Unit>(wrapperInit, unit));
+                            beforePairs.add(new InsertionPair<Unit>(initCall, unit));
+                            beforePairs.add(new InsertionPair<Unit>(arrayTemp, unit));
+
                             Unit assign = Jimple.v().newAssignStmt(arrayField, local);
                             swapPairs.add(new InsertionPair<Unit>(assign, unit));
-                            System.out.println("\tPath 2 Inserting: \n\t\t" + init.toString() + "\t\t\n" + assign.toString() + "\n");
                         }
                     }
                 }
             }
             for (InsertionPair<Unit> pair : beforePairs) {
-                System.out.println("insertBefore\n\tinsert: " + pair.toInsert.toString() + "\n\tpoint: " + pair.point.toString());
                 units.insertBefore(pair.toInsert, pair.point);
             }
             for (InsertionPair<Unit> pair : swapPairs) {
-                System.out.println("swap\n\tinsert: " + pair.toInsert.toString() + "\n\tpoint: " + pair.point.toString());
                 units.swapWith(pair.point, pair.toInsert);
             }
 //            it = units.iterator();
