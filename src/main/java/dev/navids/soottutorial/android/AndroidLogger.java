@@ -86,13 +86,6 @@ public class AndroidLogger {
                     System.out.println("Declaring class : " + b.getMethod().getDeclaringClass().getName());
                     System.out.println(b.toString());                  
 
-//                    Iterator<Unit> it = units.iterator();
-//                    while (it.hasNext()) {
-//                        Unit unit = it.next();
-//                        System.out.println("\t" + unit.toString());
-//                        System.out.println("\t" + unit.getClass().getName());
-//                        System.out.println();
-//                    }
                 }
                 lock.unlock();
             }
@@ -276,10 +269,7 @@ public class AndroidLogger {
                         Type t = rhs.getType();
                         if (ClassInstrumentationUtil.isArrayType(t)) {
                             Type elementType = ((ArrayType)t).getElementType();
-                            System.out.println("Updating PARAM " + unit.toString());
                             SootClass wrapper = findWrapper(elementType);
-                            System.out.println("\telementType " + elementType.toString());
-                            System.out.println("\tWrapper type " + wrapper.getType().toString());
                             ParameterRef newParamRef = Jimple.v().newParameterRef(
                                 wrapper.getType(),
                                 ((ParameterRef)rhs).getIndex()
@@ -289,11 +279,13 @@ public class AndroidLogger {
                         }
                     }
                 }
-                if (unit instanceof InvokeExpr) {
+                if (unit instanceof InvokeStmt) {
                     // Analyze args to see if there are any array types. If so,
                     // get array from the wrapper and pass it
-                    SootMethod calledMethod = ((InvokeExpr)unit).getMethod();
-                    List<Value> args = ((InvokeExpr)unit).getArgs();
+                    InvokeExpr invokeExpr = ((InvokeStmt)unit).getInvokeExpr();
+                    SootMethod calledMethod = invokeExpr.getMethod();
+                    System.out.println("Handling calledMethod " + calledMethod.getName());
+                    List<Value> args = invokeExpr.getArgs();
                     List <Type> paramTypes = calledMethod.getParameterTypes();
                     for (int i = 0; i < paramTypes.size(); i++) {
                         Type t = paramTypes.get(i);
@@ -307,12 +299,11 @@ public class AndroidLogger {
                             Unit arrayAssign = Jimple.v().newAssignStmt(arrayLocal, arrayField);
                             beforePairs.add(new InsertionPair<Unit>(arrayAssign, unit));
                             System.out.println("\tRetrieving array arg  for " + unit.toString());
-                            ((InvokeExpr)unit).setArg(i, arrayLocal);
+                            invokeExpr.setArg(i, arrayLocal);
                         }
                     }
                 }
                 else if (unit instanceof JAssignStmt) {
-
                     Value lhs = ((JAssignStmt)unit).getLeftOp();
                     Value rhs = ((JAssignStmt)unit).getRightOp();
                     if (lhs instanceof JInstanceFieldRef) {
@@ -339,8 +330,8 @@ public class AndroidLogger {
                         // get array from the wrapper and pass it
                         SootMethod calledMethod = ((InvokeExpr)rhs).getMethod();
                         List<Value> args = ((InvokeExpr)rhs).getArgs();
+                        System.out.println("Assign Handling calledMethod " + calledMethod.getName());
                         List <Type> paramTypes = calledMethod.getParameterTypes();
-                        System.out.println("Analyzing calledMethod args of " + calledMethod.getName());
                         for (int i = 0; i < paramTypes.size(); i++) {
                             Type t = paramTypes.get(i);
                             System.out.println("\t" + args.get(i).toString() + " is type : " + t.toString());
@@ -383,12 +374,11 @@ public class AndroidLogger {
                     Value lhs = ((JAssignStmt)unit).getLeftOp();
                     Value rhs = ((JAssignStmt)unit).getRightOp();
                     if (!lhs.getType().equals(rhs.getType())) {
+                        // TODO: Check if type casting is needed
                         System.out.println("TYPES NOT EQUAL");
                         System.out.println("\tLhs Type: " + lhs.getType().toString() + "\n");
                         System.out.println("\tRhs Type: " + rhs.getType().toString() + "\n");
                         System.out.println("\t" + unit.toString());
-
-                            // TODO: Need to initialize wrapper before writing to it
                         if (ClassInstrumentationUtil.isArrayType(lhs.getType()) && rhs.getType().toString().contains("Array")) {
                             // if lhs is an array and a wrapper type is written to it,
                             // extract the array from the wrapper and rewrite the
@@ -426,8 +416,6 @@ public class AndroidLogger {
                             Local local = InstrumentUtil.generateNewLocal(body, rhs.getType());
                             InstanceFieldRef arrayField = Jimple.v().newInstanceFieldRef(lhs, 
                                 wrapper.getFieldByName("array").makeRef());
-
-
                             NewExpr newExpr = Jimple.v().newNewExpr(wrapper.getType());
                             ((JimpleLocal)lhs).setType(wrapper.getType());
                             Unit wrapperInit = Jimple.v().newAssignStmt((JimpleLocal)lhs, newExpr);
