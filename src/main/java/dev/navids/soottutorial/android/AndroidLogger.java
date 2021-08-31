@@ -284,26 +284,22 @@ public class AndroidLogger {
                     // get array from the wrapper and pass it
                     InvokeExpr invokeExpr = ((InvokeStmt)unit).getInvokeExpr();
                     SootMethod calledMethod = invokeExpr.getMethod();
-                    System.out.println("Handling calledMethod " + calledMethod.getName());
                     List<Value> args = invokeExpr.getArgs();
                     List <Type> paramTypes = calledMethod.getParameterTypes();
                     for (int i = 0; i < paramTypes.size(); i++) {
                         Type t = paramTypes.get(i);
-                        System.out.println("\t" + args.get(i).toString() + " is type : " + t.toString());
                         if (ClassInstrumentationUtil.isArrayType(t)) {
                             Type elementType = ((ArrayType)t).getElementType();
                             SootClass wrapper = findWrapper(elementType);
                             Local arrayLocal = InstrumentUtil.generateNewLocal(body, t);
-                            if (args.get(i).toString().contains("null")) {
-                                System.out.println("\tThis is null. API type : " +  args.get(i).getClass().getName());
+                            if (args.get(i) instanceof NullConstant) {
+                                continue;
                             }
 
                             InstanceFieldRef arrayField = Jimple.v().newInstanceFieldRef(args.get(i), 
                                 wrapper.getFieldByName("array").makeRef());
                             Unit arrayAssign = Jimple.v().newAssignStmt(arrayLocal, arrayField);
                             beforePairs.add(new InsertionPair<Unit>(arrayAssign, unit));
-                            System.out.println("\tRetrieving array arg  for " + unit.toString());
-                            System.out.println("Inserted " + arrayAssign.toString());
                             invokeExpr.setArg(i, arrayLocal);
                         }
                     }
@@ -335,25 +331,20 @@ public class AndroidLogger {
                         // get array from the wrapper and pass it
                         SootMethod calledMethod = ((InvokeExpr)rhs).getMethod();
                         List<Value> args = ((InvokeExpr)rhs).getArgs();
-                        System.out.println("Assign Handling calledMethod " + calledMethod.getName());
                         List <Type> paramTypes = calledMethod.getParameterTypes();
                         for (int i = 0; i < paramTypes.size(); i++) {
                             Type t = paramTypes.get(i);
-                            System.out.println("\t" + args.get(i).toString() + " is type : " + t.toString());
                             if (ClassInstrumentationUtil.isArrayType(t)) {
                                 Type elementType = ((ArrayType)t).getElementType();
                                 SootClass wrapper = findWrapper(elementType);
                                 Local arrayLocal = InstrumentUtil.generateNewLocal(body, t);
-                                // TODO: Check if args.get(i) is null. If so, skip
-                                if (args.get(i).toString().contains("null")) {
-                                    System.out.println("\tThis is null. API type : " +  args.get(i).getClass().getName());
+                                if (args.get(i) instanceof NullConstant) {
+                                    continue;
                                 }
                                 InstanceFieldRef arrayField = Jimple.v().newInstanceFieldRef(args.get(i), 
                                     wrapper.getFieldByName("array").makeRef());
                                 Unit arrayAssign = Jimple.v().newAssignStmt(arrayLocal, arrayField);
                                 beforePairs.add(new InsertionPair<Unit>(arrayAssign, unit));
-                                System.out.println("\tRetrieving array arg  for " + unit.toString());
-                                System.out.println("Inserted " + arrayAssign.toString());
                                 ((InvokeExpr)rhs).setArg(i, arrayLocal);
                             }
                         }
@@ -374,30 +365,22 @@ public class AndroidLogger {
             it = units.iterator();
             while (it.hasNext()) {
                 Unit unit = it.next();
-                System.out.println(unit.toString());
-                System.out.println("\tType: " + unit.getClass().toString() + "\n");
                 if (unit instanceof JAssignStmt) {
                     Value lhs = ((JAssignStmt)unit).getLeftOp();
                     Value rhs = ((JAssignStmt)unit).getRightOp();
                     if (!lhs.getType().equals(rhs.getType())) {
                         // TODO: Check if type casting is needed
                         System.out.println("TYPES NOT EQUAL");
-                        System.out.println("\tLhs Type: " + lhs.getType().toString() + "\n");
-                        System.out.println("\tRhs Type: " + rhs.getType().toString() + "\n");
                         System.out.println("\t" + unit.toString());
+                        System.out.println("\tLhs Type: " + lhs.getType().toString());
+                        System.out.println("\tRhs Type: " + rhs.getType().toString());
                         if (ClassInstrumentationUtil.isArrayType(lhs.getType()) && rhs.getType().toString().contains("Array")) {
                             // if lhs is an array and a wrapper type is written to it,
                             // extract the array from the wrapper and rewrite the
                             // assignment statement
+                            System.out.println("PATH 1");
                             Type elementType = ((ArrayType)lhs.getType()).getElementType();
-                            String wrapperName = ClassInstrumentationUtil.typeToWrapperName(lhs.getType());
-                            SootClass wrapper;
-                            if (this.namesToArrayClasses.containsKey(wrapperName)) {
-                                wrapper = this.namesToArrayClasses.get(wrapperName);
-                            }
-                            else {
-                                continue;
-                            }
+                            SootClass wrapper = findWrapper(elementType);
                             Local local = InstrumentUtil.generateNewLocal(body, lhs.getType());
                             InstanceFieldRef arrayField = Jimple.v().newInstanceFieldRef(rhs, 
                                 wrapper.getFieldByName("array").makeRef());
@@ -405,20 +388,15 @@ public class AndroidLogger {
                             Unit init = Jimple.v().newAssignStmt(local, arrayField);
                             beforePairs.add(new InsertionPair<Unit>(init, unit));
                             Unit assign = Jimple.v().newAssignStmt(lhs, local);
+                            System.out.println("Replacing with:\n\t\t" + init.toString() + "\n\t\t" + assign.toString() + "\n");
                             swapPairs.add(new InsertionPair<Unit>(assign, unit));
                         }
                         else if (ClassInstrumentationUtil.isArrayType(rhs.getType()) && lhs.getType().toString().contains("Array")) {
+                            System.out.println("PATH 2");
                             // if rhs is an array and it is written to a wrapper type on lhs,
                             // write the array directly to the wrapper's array object
                             Type elementType = ((ArrayType)rhs.getType()).getElementType();
-                            String wrapperName = ClassInstrumentationUtil.typeToWrapperName(lhs.getType());
-                            SootClass wrapper;
-                            if (this.namesToArrayClasses.containsKey(wrapperName)) {
-                                wrapper = this.namesToArrayClasses.get(wrapperName);
-                            }
-                            else {
-                                continue;
-                            }
+                            SootClass wrapper = findWrapper(elementType);
                             Local local = InstrumentUtil.generateNewLocal(body, rhs.getType());
                             InstanceFieldRef arrayField = Jimple.v().newInstanceFieldRef(lhs, 
                                 wrapper.getFieldByName("array").makeRef());
@@ -436,8 +414,13 @@ public class AndroidLogger {
                             beforePairs.add(new InsertionPair<Unit>(initCall, unit));
                             beforePairs.add(new InsertionPair<Unit>(arrayTemp, unit));
 
+                            System.out.println("Replacing with:\n\t\t" + wrapperInit.toString() + "\n\t\t" + initCall.toString() + "\n\t\t" + arrayTemp.toString() + "\n\t\t" + arrayTemp.toString() + "\n");
+
                             Unit assign = Jimple.v().newAssignStmt(arrayField, local);
                             swapPairs.add(new InsertionPair<Unit>(assign, unit));
+                        }
+                        else {
+                            System.out.println("NO PATH");
                         }
                     }
                 }
