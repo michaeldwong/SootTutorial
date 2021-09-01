@@ -21,6 +21,18 @@ public class ArrayWrapperCreator {
         this.arrayClasses = new HashMap<>();
     }
 
+    private int countSubstring(String fullString, String substring) {
+        int lastIndex = 0;
+        int count = 0;
+        while(lastIndex != -1){
+            lastIndex = fullString.indexOf(substring,lastIndex);
+            if(lastIndex != -1){
+                count ++;
+                lastIndex += substring.length();
+            }
+        }
+        return count;
+    }
     public SootMethod createArrayConstructor(SootClass arrayClass, String arrayClassName, Type elementType, SootField counterField) {
 
         String methodName = "<init>";
@@ -64,7 +76,7 @@ public class ArrayWrapperCreator {
         return constructor;
     }
 
-    public void createArrayGetter(SootClass arrayClass, String arrayClassName, Type elementType, SootMethod incReads) {
+    public void createArrayGetter(SootClass arrayClass, String arrayClassName, Type elementType, SootMethod incReads, int dimensions) {
         String methodName = "get";
         SootMethod getter = new SootMethod(methodName,
             Arrays.asList(new Type[]{IntType.v()}),
@@ -92,7 +104,7 @@ public class ArrayWrapperCreator {
         body.validate();
         getter.setActiveBody(body);
     }
-    public void createArraySetter(SootClass arrayClass, String arrayClassName, Type elementType, SootMethod incWrites) {
+    public void createArraySetter(SootClass arrayClass, String arrayClassName, Type elementType, SootMethod incWrites, int dimensions) {
         String methodName = "set";
         SootMethod setter = new SootMethod(methodName,
             Arrays.asList(new Type[]{IntType.v(), elementType}),
@@ -124,17 +136,19 @@ public class ArrayWrapperCreator {
     }
 
     public void createArrayAccessMethods(SootClass arrayClass, String arrayClassName, 
-                Type elementType, SootMethod incReads, SootMethod incWrites) {
-        createArrayGetter(arrayClass, arrayClassName, elementType, incReads); 
-        createArraySetter(arrayClass, arrayClassName, elementType, incWrites);  
+                Type elementType, SootMethod incReads, SootMethod incWrites, int dimensions) {
+        createArrayGetter(arrayClass, arrayClassName, elementType, incReads, dimensions); 
+        createArraySetter(arrayClass, arrayClassName, elementType, incWrites, dimensions);  
     }
 
     public String arrayTypeToName(Type elementType) {
         String [] strArray = elementType.toString().split("\\.");
-        return strArray[strArray.length - 1] + "Array";
+        return strArray[strArray.length - 1].replace("[]", "Array") + "Array";
     }
 
     public SootClass createArrayClass(Type elementType, HashMap <String, SootMethod> classNamesToReadIncrementors, HashMap <String, SootMethod> classNamesToWriteIncrementors) {
+        // Dimension of array wrapper 
+        int dimensions = countSubstring(elementType.toString(), "[]") + 1;
         String arrayClassName = arrayTypeToName(elementType);
 
         if (this.arrayClasses.containsKey(arrayClassName)) {
@@ -144,19 +158,20 @@ public class ArrayWrapperCreator {
         SootClass arrayClass = new SootClass(signature, Modifier.PUBLIC);
         arrayClass.setSuperclass(Scene.v().getSootClass("java.lang.Object")); 
         arrayClass.setApplicationClass();
-
         HashMap <String, ObjectProfilingData> classNamesToObjectData = new HashMap<>();
         ClassInstrumentationUtil.addObjectAccessFields(arrayClass, this.counterClass, arrayClassName, classNamesToObjectData, 
               classNamesToReadIncrementors, classNamesToWriteIncrementors);
         SootField array = new SootField("array", elementType.makeArrayType());
         arrayClass.addField(array);
+        System.out.println("Element type = " + elementType.toString() + " (dimensions = " + dimensions);
+        System.out.println("Array type = " + elementType.getArrayType().toString());
+
         System.out.println("Created class " + signature);
-        System.out.println("Array type = " + elementType.getArrayType().toString() + ", element type = ");
         ObjectProfilingData data = classNamesToObjectData.get(arrayClassName);
         SootMethod constructor = createArrayConstructor(arrayClass, arrayClassName, elementType, data.staticCounter); 
         SootMethod incReads = classNamesToReadIncrementors.get(arrayClassName);
         SootMethod incWrites = classNamesToWriteIncrementors.get(arrayClassName);
-        createArrayAccessMethods(arrayClass, arrayClassName, elementType, incReads, incWrites);
+        createArrayAccessMethods(arrayClass, arrayClassName, elementType, incReads, incWrites, dimensions);
         this.arrayClasses.put(arrayClassName, arrayClass);
         return arrayClass; 
     }
