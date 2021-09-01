@@ -205,6 +205,16 @@ public class ClassInstrumentationUtil {
 
         body.validate(); 
     }
-
-
+    static String findBaseType(String typeString) {
+        System.out.println("finding base type for " + typeString);
+        String [] strArray = typeString.split("\\.");
+        String last = strArray[strArray.length - 1]; 
+        System.out.println("last = " + last);
+        if (last.contains("Array")) {
+            String s = last.substring(0, last.indexOf("Array"));   
+            System.out.println("\tBase type of " + last + " is " + s);
+            return s;
+        }
+        return last;
+    }
 }

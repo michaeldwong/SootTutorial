@@ -473,17 +473,16 @@ public class AndroidLogger {
 
         private void arrayRefWrite(Unit unit, Value lhs, Value rhs,
                         ArrayList<InsertionPair<Unit>>beforePairs, ArrayList<InsertionPair<Unit>>swapPairs) {
-            // Replaces write to array to use set method
-            // TODO: Error currently facing is line : r5[0] = r6
-            //      r6 is a Double and we're getting the wrapper for DOubleType. But 
-            //      r5 is supposed to be ObjectArray! If need to see error log,
-            //      keep log messages the same and search for ROUND 1 ->  
-            //      r5[0] = r6
-            Type elementType = rhs.getType();
-            SootClass wrapper = findWrapper(elementType);
+            SootClass wrapper;
+            String lhsBaseType = ClassInstrumentationUtil.findBaseType(lhs.getType().toString());
+            String rhsBaseType = ClassInstrumentationUtil.findBaseType(rhs.getType().toString());
+            if (!lhsBaseType.equals(rhsBaseType)) {
+                wrapper = this.namesToArrayClasses.get(lhsBaseType);
+            }
+            else {
+                wrapper = findWrapper(rhs.getType()); }
             Value lhsLocal = ((JArrayRef)lhs).getBase();
             ((Local)lhsLocal).setType(wrapper.getType());
-
             SootMethod setMethod = wrapper.getMethodByName("set");
             Unit call = Jimple.v().newInvokeStmt(Jimple.v().newVirtualInvokeExpr((Local)lhsLocal, 
                 setMethod.makeRef(), ((JArrayRef)lhs).getIndex(), rhs));
@@ -542,7 +541,6 @@ public class AndroidLogger {
                 wrapper = this.namesToArrayClasses.get(wrapperName);
             }
             else {
-                wrapperName = this.arrayWrapperCreator.arrayTypeToName(elementType);
                 wrapper = this.arrayWrapperCreator.createArrayClass(elementType, 
                     this.classNamesToReadIncrementors, this.classNamesToWriteIncrementors);
                 this.namesToArrayClasses.put(wrapperName, wrapper);
