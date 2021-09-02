@@ -76,6 +76,7 @@ public class ArrayWrapperCreator {
         return constructor;
     }
 
+
     public void createArrayGetter(SootClass arrayClass, String arrayClassName, Type elementType, SootMethod incReads, int dimensions) {
         String methodName = "get";
         SootMethod getter = new SootMethod(methodName,
@@ -140,17 +141,16 @@ public class ArrayWrapperCreator {
         createArrayGetter(arrayClass, arrayClassName, elementType, incReads, dimensions); 
         createArraySetter(arrayClass, arrayClassName, elementType, incWrites, dimensions);  
     }
-
+   
     public String arrayTypeToName(Type elementType) {
-        String [] strArray = elementType.toString().split("\\.");
-        return strArray[strArray.length - 1].replace("[]", "Array") + "Array";
+        String joined = elementType.toString().replace(".", "");
+        return joined.replace("[]", "Array") + "Array";
     }
 
     public SootClass createArrayClass(Type elementType, HashMap <String, SootMethod> classNamesToReadIncrementors, HashMap <String, SootMethod> classNamesToWriteIncrementors) {
         // Dimension of array wrapper 
         int dimensions = countSubstring(elementType.toString(), "[]") + 1;
         String arrayClassName = arrayTypeToName(elementType);
-
         if (this.arrayClasses.containsKey(arrayClassName)) {
             return this.arrayClasses.get(arrayClassName);
         }

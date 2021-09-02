@@ -19,7 +19,7 @@ import java.util.concurrent.locks.*;
 public class AndroidLogger {
 
     private final static String USER_HOME = System.getProperty("user.home");
-    private static String androidJar = "/usr/lib/android-sdk/platforms";
+    private static String androidJar = USER_HOME + "/Documents/android/platforms";
     private static HashSet<String> generatedFunctionNames = new HashSet<String>();
     static String androidDemoPath = System.getProperty("user.dir") + File.separator + "demo" + File.separator + "Android";
     static String apkPath = androidDemoPath + File.separator + "/calc.apk";
@@ -370,6 +370,7 @@ public class AndroidLogger {
                             // extract the array from the wrapper and rewrite the
                             // assignment statement
                             Type elementType = ((ArrayType)lhs.getType()).getElementType();
+
                             SootClass wrapper = findWrapper(elementType);
                             Local local = InstrumentUtil.generateNewLocal(body, lhs.getType());
                             InstanceFieldRef arrayField = Jimple.v().newInstanceFieldRef(rhs, 
@@ -383,6 +384,7 @@ public class AndroidLogger {
                             // if rhs is an array and it is written to a wrapper type on lhs,
                             // write the array directly to the wrapper's array object
                             Type elementType = ((ArrayType)rhs.getType()).getElementType();
+
                             SootClass wrapper = findWrapper(elementType);
                             Local local = InstrumentUtil.generateNewLocal(body, rhs.getType());
                             InstanceFieldRef arrayField = Jimple.v().newInstanceFieldRef(lhs, 
@@ -423,6 +425,13 @@ public class AndroidLogger {
                         ArrayList<InsertionPair<Unit>>beforePairs, ArrayList<InsertionPair<Unit>>swapPairs) {
             // Replaces write to array to use set method
             Type elementType = lhs.getType();
+
+            // TODO: Handle double array reads. When rhs is double array,
+            // lhs is single array. 
+            System.out.println("OPT 6");
+            System.out.println("UNIT : " + unit.toString());
+            System.out.println("\tlhs type = " + lhs.getType().toString());
+            System.out.println("\trhs type = " + rhs.getType().toString());
             SootClass wrapper = findWrapper(elementType);
             Value rhsLocal = ((JArrayRef)rhs).getBase();
             ((Local)rhsLocal).setType(wrapper.getType());
@@ -440,10 +449,19 @@ public class AndroidLogger {
             String lhsBaseType = ClassInstrumentationUtil.findBaseType(lhs.getType().toString());
             String rhsBaseType = ClassInstrumentationUtil.findBaseType(rhs.getType().toString());
             if (!lhsBaseType.equals(rhsBaseType)) {
-                wrapper = this.namesToArrayClasses.get(lhsBaseType);
+                String name = ClassInstrumentationUtil.classNameFromString(lhsBaseType);
+                wrapper = this.namesToArrayClasses.get(name);
+                System.out.println("lhsBaseType is " + name);
             }
             else {
-                wrapper = findWrapper(rhs.getType()); }
+                // TODO: Handle double array writes
+                System.out.println("OPT 7");
+                wrapper = findWrapper(rhs.getType()); 
+            }
+            if (wrapper == null) {
+                System.out.println("\tUNIT : " + unit.toString() + " -> wrapper for lhs not found");
+                System.out.println("\tKeys currently supported\n"+  this.namesToArrayClasses.toString());
+            }
             Value lhsLocal = ((JArrayRef)lhs).getBase();
             ((Local)lhsLocal).setType(wrapper.getType());
             SootMethod setMethod = wrapper.getMethodByName("set");
@@ -457,6 +475,7 @@ public class AndroidLogger {
 
             Type elementType = ((JNewArrayExpr)rhs).getBaseType();
             Value size = ((JNewArrayExpr)rhs).getSize();
+
             SootClass wrapper = findWrapper(elementType);
             NewExpr newExpr = Jimple.v().newNewExpr(wrapper.getType());
             ((JimpleLocal)lhs).setType(wrapper.getType());
@@ -499,6 +518,7 @@ public class AndroidLogger {
 
         private SootClass findWrapper(Type elementType) {
             String wrapperName = ClassInstrumentationUtil.typeToWrapperName(elementType);
+            System.out.println("element name : " + elementType.toString() + " -> wrapperName : " + wrapperName);
             SootClass wrapper;
             if (this.namesToArrayClasses.containsKey(wrapperName)) {
                 wrapper = this.namesToArrayClasses.get(wrapperName);
@@ -511,7 +531,6 @@ public class AndroidLogger {
             }
             return wrapper;
         }
-
     }
 
 

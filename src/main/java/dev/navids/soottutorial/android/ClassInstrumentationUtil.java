@@ -164,13 +164,19 @@ public class ClassInstrumentationUtil {
     static boolean isArrayType(Type type) {
         return type.toString().contains("[]");
     }
+
+    // Gets string in form a.b.c and returns c
+    static String classNameFromString(String s) {
+        String [] strArray = s.split("\\.");
+        return strArray[strArray.length - 1];
+    }
+
     static String typeToWrapperName(Type elementType) {
-        String [] strArray = elementType.toString().split("\\.");
-        String lastElement = strArray[strArray.length - 1];
+        String joined = elementType.toString().replace(".", "");
         if (ClassInstrumentationUtil.isArrayType(elementType)) {
-            return lastElement.replace("[]", "Array");
+            return joined.replace("[]", "Array");
         }
-        return lastElement;
+        return joined;
     }
     static void addSerialInitialization(JimpleBody body, SootField serialField, SootField staticCounterField, SootClass currentClass) {
         UnitPatchingChain units = body.getUnits();
@@ -206,15 +212,7 @@ public class ClassInstrumentationUtil {
         body.validate(); 
     }
     static String findBaseType(String typeString) {
-        System.out.println("finding base type for " + typeString);
-        String [] strArray = typeString.split("\\.");
-        String last = strArray[strArray.length - 1]; 
-        System.out.println("last = " + last);
-        if (last.contains("Array")) {
-            String s = last.substring(0, last.indexOf("Array"));   
-            System.out.println("\tBase type of " + last + " is " + s);
-            return s;
-        }
-        return last;
+        String joined = typeString.replace("\\.", "");
+        return joined.replace("Array", "") ;
     }
 }
